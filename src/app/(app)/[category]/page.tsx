@@ -1,14 +1,16 @@
 import { notFound } from "next/navigation";
 
+import { LibraryView, type ViewMode } from "@/components/items/LibraryView";
+import { getLibraryItems } from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 
-// Stub route (issue #10, acceptance criteria C): looks up the requested
-// slug against `categories`. A known slug (the only kind reachable via a
-// nav click, since tabs only render seeded slugs) renders a minimal
-// placeholder inside the shell -- the real library list/card view + filters
-// is #12's job, so no item querying belongs here. An unknown slug (only
-// reachable by typing a bad URL directly) is a genuine 404 via notFound(),
-// per the issue's edge cases -- not a shell-wrapped "coming soon" stub.
+// Category library view (issue #12): replaces the #10 stub. Keeps the
+// existing slug->category lookup and notFound() for an unknown slug
+// unchanged, then queries every non-deleted item the signed-in user owns in
+// that category (RLS already scopes this to auth.uid(), see
+// database-schema.md §4) plus their persisted list_view_mode preference,
+// and hands both to the client-side LibraryView for rendering + the
+// List/Card toggle.
 export default async function CategoryPage({
   params,
 }: {
@@ -19,7 +21,7 @@ export default async function CategoryPage({
   const supabase = await createClient();
   const { data: category } = await supabase
     .from("categories")
-    .select("name")
+    .select("id, name")
     .eq("slug", slug)
     .maybeSingle();
 
@@ -27,14 +29,36 @@ export default async function CategoryPage({
     notFound();
   }
 
+  // middleware.ts (#9) already redirects unauthenticated requests to
+  // /login before this ever renders, so `user` being present here is
+  // expected -- but items/preferences reads below need the id, so this
+  // guards the (defensive-only, e.g. an expired session) null case the
+  // same way settings/page.tsx does.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const [items, preferences] = await Promise.all([
+    getLibraryItems(category.id),
+    user
+      ? supabase
+          .from("user_preferences")
+          .select("list_view_mode")
+          .eq("user_id", user.id)
+          .maybeSingle()
+          .then(({ data }) => data)
+      : Promise.resolve(null),
+  ]);
+
+  const initialViewMode: ViewMode =
+    preferences?.list_view_mode === "card" ? "card" : "list";
+
   return (
-    <div className="flex flex-1 flex-col gap-2 px-6 py-8">
-      <h1 className="text-lg font-semibold text-text-primary">
-        {category.name}
-      </h1>
-      <p className="text-sm text-text-secondary">
-        Full library view coming in #12.
-      </p>
-    </div>
+    <LibraryView
+      categoryName={category.name}
+      categorySlug={slug}
+      items={items}
+      initialViewMode={initialViewMode}
+    />
   );
 }

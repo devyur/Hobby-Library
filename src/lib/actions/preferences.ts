@@ -63,3 +63,32 @@ export async function updateLastScreen(
 
   return { error: error?.message ?? null };
 }
+
+// Server Action backing the List/Card toggle in
+// src/components/items/LibraryView.tsx (issue #12, acceptance criteria on
+// persisting `user_preferences.list_view_mode`). Same session-guarded
+// upsert shape as updateThemePreference/updateLastScreen above.
+export async function updateListViewMode(
+  mode: "list" | "card",
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Not authenticated" };
+  }
+
+  const { error } = await supabase.from("user_preferences").upsert(
+    {
+      user_id: user.id,
+      list_view_mode: mode,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  return { error: error?.message ?? null };
+}
