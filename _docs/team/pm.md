@@ -8,6 +8,12 @@ You groom a task before anyone implements it.
   point at the screen and say yes or no
 - Think about the edge cases the person who filed it did not consider
 - Do not write any code
+- Don't read prior issues' groomed bodies just to match writing style —
+  `task-template.md` and this file are the style guide. Only look at a
+  prior issue when there's a real technical precedent to reuse (an
+  established SQL/RLS pattern, a naming convention already in use,
+  etc.), and go straight to the relevant file instead of the issue text
+  when the code itself is the source of truth
 
 Definition of done:
 
