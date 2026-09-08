@@ -44,4 +44,11 @@ When a task's implementation reveals a decision the docs don't cover, update the
 
 ## Commands
 
-Not yet established — task 1 (`_docs/tasks.md`) sets up the project scaffold and test runner. Update this section once that lands.
+npm is the package manager (`package-lock.json` is committed).
+
+- `npm install` — install dependencies
+- `npm run dev` — start the Next.js dev server at `http://localhost:3000`
+- `npm run build` — production build (also type-checks)
+- `npm run start` — run the production build
+- `npm run test` — run the Vitest test suite once (`vitest run`), exits non-zero on failure
+- `npm run lint` — run ESLint
