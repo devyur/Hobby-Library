@@ -3,7 +3,6 @@ import { Inter } from "next/font/google";
 import Script from "next/script";
 import "./globals.css";
 
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { createClient } from "@/lib/supabase/server";
 
 // _docs/ui-style-guide.md §2: Inter is the only font family for V1 (no
@@ -102,10 +101,6 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           {THEME_INIT_SCRIPT}
         </Script>
         {children}
-        {/* Temporary mount point for manual verification (issue #8). Final
-            home is the Settings page (#11) -- this placement is not final
-            UI. */}
-        <ThemeToggle />
       </body>
     </html>
   );
