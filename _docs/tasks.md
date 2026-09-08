@@ -131,3 +131,7 @@ Description: Do a dedicated pass across all existing pages (library views, item 
 ## 32. Production deployment + Supabase keep-alive — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/32)
 Goal: Get the app live on the internet on the free-tier stack.
 Description: Deploy the app to Vercel connected to the production Supabase project, wire environment variables/secrets, and add the scheduled keep-alive ping (e.g. GitHub Actions cron) discussed in `plan.md`'s tech stack decision to prevent the free Supabase project from pausing.
+
+## 33. Grant service_role access to app tables — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/33)
+Goal: Let server-side admin tooling (cron jobs, exports, test/QA scripts) actually read/write app tables.
+Description: Discovered during #10's QA — every migration since #3 only grants table access to `authenticated`, never `service_role`, so a service-role-authenticated request currently gets `permission denied` on every app table. Add a migration granting `service_role` the access it needs, and document the reasoning in `database-schema.md` §4.
