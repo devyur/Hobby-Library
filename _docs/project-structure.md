@@ -85,16 +85,16 @@ Hobby Library/
 │   │   ├── auth/
 │   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
-│   │   │   ├── layout.tsx              # nav shell (#9: bare placeholder until #10)
+│   │   │   ├── layout.tsx              # nav shell (#10)
 │   │   │   ├── dashboard/page.tsx
 │   │   │   ├── [category]/
-│   │   │   │   ├── page.tsx            # library list/card view + filters
+│   │   │   │   ├── page.tsx            # library list/card view + filters (#10: placeholder until #12)
 │   │   │   │   └── [itemId]/page.tsx   # item detail/edit
 │   │   │   ├── lists/
-│   │   │   │   ├── page.tsx
+│   │   │   │   ├── page.tsx            # #10: placeholder until #26
 │   │   │   │   └── [listId]/page.tsx
-│   │   │   ├── trash/page.tsx
-│   │   │   └── settings/page.tsx
+│   │   │   ├── trash/page.tsx          # #10: placeholder until #25
+│   │   │   └── settings/page.tsx       # #10: placeholder until #11
 │   │   ├── api/
 │   │   │   └── export/route.ts
 │   │   ├── layout.tsx                  # root layout

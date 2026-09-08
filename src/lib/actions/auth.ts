@@ -52,6 +52,38 @@ function zodFieldErrors(issues: { path: PropertyKey[]; message: string }[]) {
   return fieldErrors;
 }
 
+// Resolves where a just-authenticated (or already-authenticated) user
+// should land (issue #10, acceptance criteria D): `user_preferences
+// .last_screen` if it's a non-null value starting with "/" (defensive
+// check -- LastScreenTracker.tsx/updateLastScreen are the only things that
+// ever write this column, and always with a path), otherwise "/dashboard".
+// That fallback covers both "no user_preferences row at all" (a brand-new
+// account -- no signup flow creates one) and "row exists but last_screen is
+// still NULL" (e.g. only ever toggled theme) identically, since
+// `.maybeSingle()` and optional chaining both collapse to the same
+// `undefined` in either case.
+//
+// Shared by loginAction/registerAction below and by the already-
+// authenticated checks in (auth)/login/page.tsx and (auth)/register/
+// page.tsx, so all three "where does an authenticated user go" call sites
+// agree. Exported from this "use server" module, so (per Next.js's rules
+// for such modules) it's callable as a Server Action -- here it's simply
+// invoked directly from Server Components/Actions, not bound to a form.
+export async function getPostAuthRedirect(userId: string): Promise<string> {
+  const supabase = await createClient();
+
+  const { data } = await supabase
+    .from("user_preferences")
+    .select("last_screen")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const lastScreen = data?.last_screen;
+  return typeof lastScreen === "string" && lastScreen.startsWith("/")
+    ? lastScreen
+    : "/dashboard";
+}
+
 export async function registerAction(
   _prevState: AuthFormState,
   formData: FormData,
@@ -115,7 +147,11 @@ export async function registerAction(
     }
   }
 
-  redirect("/dashboard");
+  // In practice this always resolves to "/dashboard" -- a just-created
+  // account has no user_preferences row yet -- but it goes through the same
+  // helper as loginAction for consistency (issue #10, acceptance criteria
+  // D), rather than special-casing the hardcoded redirect here.
+  redirect(data.user ? await getPostAuthRedirect(data.user.id) : "/dashboard");
 }
 
 function mapRegisterError(error: AuthError): AuthFormState {
@@ -144,7 +180,7 @@ export async function loginAction(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
   });
@@ -157,7 +193,9 @@ export async function loginAction(
     return { formError: "Invalid email or password", fieldErrors: {} };
   }
 
-  redirect("/dashboard");
+  // Issue #10, acceptance criteria D: land back on the user's last-visited
+  // screen instead of always /dashboard.
+  redirect(data.user ? await getPostAuthRedirect(data.user.id) : "/dashboard");
 }
 
 export async function logoutAction() {
