@@ -3,7 +3,21 @@
 import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
-import { addItemSchema, type ItemFormState } from "@/lib/validation/items";
+import {
+  addItemSchema,
+  quickAddItemSchema,
+  type ItemFormState,
+} from "@/lib/validation/items";
+
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+// Matches the itemStatusValues/priorityLevelValues literal unions in
+// lib/validation/items.ts (not imported from there since those are kept
+// local/unexported to that module) and the items table's own
+// item_status/priority_level Postgres enums -- narrower than `string` so
+// the insert below type-checks against the generated Supabase types.
+type ItemStatus = "planned" | "ongoing" | "completed" | "dropped";
+type PriorityLevel = "low" | "medium" | "high";
 
 // Same shape as auth.ts's zodFieldErrors -- duplicated locally rather than
 // imported, since this "use server" module and lib/actions/auth.ts are
@@ -18,6 +32,57 @@ function zodFieldErrors(issues: { path: PropertyKey[]; message: string }[]) {
     }
   }
   return fieldErrors;
+}
+
+// Shared insert helper (issue #15's constraint: the actual `items` row
+// write must not be duplicated between createItemAction below and
+// quickAddItemAction further down). Callers are responsible for their own
+// pre-insert validation (category exists, subtype belongs to category,
+// tags exist, etc.) -- this only performs the insert itself and classifies
+// the one failure mode a caller can't already rule out client-side: the
+// items_check_subtype_category trigger (migration
+// 20260908130000_create_items_table.sql) rejecting a category/subtype
+// mismatch that slipped past an explicit pre-check (or wasn't checked at
+// all, as in quickAddItemAction, which trusts its own just-resolved
+// subtype).
+async function insertItemRow(
+  supabase: SupabaseServerClient,
+  params: {
+    userId: string;
+    categoryId: string;
+    subtypeId: string;
+    title: string;
+    status: ItemStatus;
+    rating?: number | null;
+    priority?: PriorityLevel | null;
+    notes?: string | null;
+    review?: string | null;
+  },
+): Promise<{ item: { id: string } } | { error: "subtype_category_mismatch" | string }> {
+  const { data: item, error: insertError } = await supabase
+    .from("items")
+    .insert({
+      user_id: params.userId,
+      title: params.title,
+      category_id: params.categoryId,
+      subtype_id: params.subtypeId,
+      status: params.status,
+      rating: params.rating ?? null,
+      priority: params.priority ?? null,
+      notes: params.notes ?? null,
+      review: params.review ?? null,
+    })
+    .select("id")
+    .single();
+
+  if (insertError || !item) {
+    if (insertError?.message.includes("does not belong to category_id")) {
+      return { error: "subtype_category_mismatch" };
+    }
+    return { error: insertError?.message ?? "Failed to create the item. Please try again." };
+  }
+
+  return { item };
 }
 
 // Server Action backing AddItemForm.tsx (issue #14). Re-validates with the
@@ -113,28 +178,24 @@ export async function createItemAction(
     }
   }
 
-  const { data: item, error: insertError } = await supabase
-    .from("items")
-    .insert({
-      user_id: user.id,
-      title: parsed.data.title,
-      category_id: parsed.data.categoryId,
-      subtype_id: parsed.data.subtypeId,
-      status: parsed.data.status,
-      rating: parsed.data.rating ?? null,
-      priority: parsed.data.priority ?? null,
-      notes: parsed.data.notes ?? null,
-      review: parsed.data.review ?? null,
-    })
-    .select("id")
-    .single();
+  const result = await insertItemRow(supabase, {
+    userId: user.id,
+    categoryId: parsed.data.categoryId,
+    subtypeId: parsed.data.subtypeId,
+    title: parsed.data.title,
+    status: parsed.data.status,
+    rating: parsed.data.rating,
+    priority: parsed.data.priority,
+    notes: parsed.data.notes,
+    review: parsed.data.review,
+  });
 
-  if (insertError || !item) {
-    // Second line of defense against items_check_subtype_category (see the
-    // function comment above) -- not expected to ever fire given the
+  if ("error" in result) {
+    // Second line of defense against items_check_subtype_category (see
+    // insertItemRow's comment above) -- not expected to ever fire given the
     // explicit cross-check above, but a raw Postgres exception must never
     // surface as an unhandled 500 either way.
-    if (insertError?.message.includes("does not belong to category_id")) {
+    if (result.error === "subtype_category_mismatch") {
       return {
         formError: null,
         fieldErrors: {
@@ -142,11 +203,10 @@ export async function createItemAction(
         },
       };
     }
-    return {
-      formError: insertError?.message ?? "Failed to create the item. Please try again.",
-      fieldErrors: {},
-    };
+    return { formError: result.error, fieldErrors: {} };
   }
+
+  const item = result.item;
 
   if (parsed.data.tagIds.length > 0) {
     const { error: tagError } = await supabase
@@ -163,4 +223,93 @@ export async function createItemAction(
   }
 
   redirect(`/${category.slug}/${item.id}`);
+}
+
+// Server Action backing QuickAddForm.tsx (issue #15). Same client-pre-check
+// + server-re-check shape as createItemAction above, but with only two
+// inputs -- title and categoryId -- coming from the client at all:
+//
+//   - status is hardcoded to "planned" here, never read from the form.
+//   - subtype_id is resolved server-side to the selected category's
+//     predefined "Other" row (`user_id IS NULL AND name = 'Other'`,
+//     per subtypes-and-tags.md) -- the client has no subtype input and
+//     this action never reads a client-supplied subtype_id, so there is
+//     nothing here for a tampered submission to override.
+//
+// Per subtypes-and-tags.md all four V1 categories' predefined subtype
+// lists end in "Other", so this lookup is expected to always succeed --
+// but if it doesn't (data drift), the failure is a clean formError, never
+// an unhandled 500 or a row inserted with a missing/invalid subtype_id.
+export async function quickAddItemAction(
+  _prevState: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const parsed = quickAddItemSchema.safeParse({
+    title: formData.get("title"),
+    categoryId: formData.get("categoryId"),
+  });
+
+  if (!parsed.success) {
+    return { formError: null, fieldErrors: zodFieldErrors(parsed.error.issues) };
+  }
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // request to /login before this route/action is ever reachable.
+    return { formError: "You must be signed in to add an item.", fieldErrors: {} };
+  }
+
+  const { data: category } = await supabase
+    .from("categories")
+    .select("id, slug")
+    .eq("id", parsed.data.categoryId)
+    .maybeSingle();
+  if (!category) {
+    return {
+      formError: null,
+      fieldErrors: { categoryId: "Selected category does not exist" },
+    };
+  }
+
+  const { data: otherSubtype } = await supabase
+    .from("subtypes")
+    .select("id")
+    .eq("category_id", category.id)
+    .is("user_id", null)
+    .eq("name", "Other")
+    .maybeSingle();
+  if (!otherSubtype) {
+    return {
+      formError:
+        "This category doesn't have a default subtype set up yet, so Quick Add can't be used for it right now. Try Add item instead.",
+      fieldErrors: {},
+    };
+  }
+
+  const result = await insertItemRow(supabase, {
+    userId: user.id,
+    categoryId: category.id,
+    subtypeId: otherSubtype.id,
+    title: parsed.data.title,
+    status: "planned",
+  });
+
+  if ("error" in result) {
+    // The subtype above was just resolved by this action itself (not
+    // client input), so a mismatch is not expected -- but insertItemRow's
+    // trigger-error classification is handled the same defensive way as
+    // createItemAction, rather than assumed unreachable.
+    const message =
+      result.error === "subtype_category_mismatch"
+        ? "Something went wrong adding this item. Please try again."
+        : result.error;
+    return { formError: message, fieldErrors: {} };
+  }
+
+  redirect(`/${category.slug}`);
 }

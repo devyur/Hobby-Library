@@ -55,6 +55,14 @@ export function LibraryView({
           <Button asChild size="sm">
             <Link href="/add">Add item</Link>
           </Button>
+          {/* Entry point for the Quick Add flow (issue #15) -- unlike Full
+              Add above, this route's Category field has no reactive
+              subtype list to drive, so pre-filling it via ?category=<slug>
+              is exactly the "two interactions: title, submit" the issue
+              calls for when arriving from this category's own view. */}
+          <Button asChild size="sm" variant="outline">
+            <Link href={`/quick-add?category=${categorySlug}`}>Quick Add</Link>
+          </Button>
           <div
             role="group"
             aria-label="View mode"

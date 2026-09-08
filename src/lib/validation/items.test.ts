@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addItemSchema } from "./items";
+import { addItemSchema, quickAddItemSchema } from "./items";
 
 // Unit tests for the shared Zod schema backing the Full Add form (issue
 // #14). Same "client pre-check + server re-check share one schema" role as
@@ -136,6 +136,65 @@ describe("addItemSchema", () => {
     const result = addItemSchema.safeParse(
       minimumValidItem({ tagIds: ["not-a-uuid"] }),
     );
+    expect(result.success).toBe(false);
+  });
+});
+
+// Unit tests for the Quick Add form's schema (issue #15) -- title + category
+// only. status/subtype_id have no fields here at all (resolved server-side
+// in quickAddItemAction), so there's nothing to test-for-absence beyond
+// checking the parsed shape below.
+describe("quickAddItemSchema", () => {
+  it("accepts a valid title + category", () => {
+    const result = quickAddItemSchema.safeParse({
+      title: "Elden Ring",
+      categoryId: VALID_UUID_A,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toEqual({ title: "Elden Ring", categoryId: VALID_UUID_A });
+    }
+  });
+
+  it("rejects an empty title", () => {
+    const result = quickAddItemSchema.safeParse({
+      title: "",
+      categoryId: VALID_UUID_A,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === "title")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("rejects a whitespace-only title", () => {
+    const result = quickAddItemSchema.safeParse({
+      title: "   ",
+      categoryId: VALID_UUID_A,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a missing category", () => {
+    const result = quickAddItemSchema.safeParse({
+      title: "Elden Ring",
+      categoryId: null,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "categoryId"),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a non-uuid category id (a tampered <option value>)", () => {
+    const result = quickAddItemSchema.safeParse({
+      title: "Elden Ring",
+      categoryId: "not-a-uuid",
+    });
     expect(result.success).toBe(false);
   });
 });

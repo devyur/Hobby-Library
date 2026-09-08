@@ -74,6 +74,21 @@ export const addItemSchema = z.object({
 
 export type AddItemInput = z.infer<typeof addItemSchema>;
 
+// Quick Add form (issue #15): title + category only. status ('planned')
+// and subtype_id (the category's predefined "Other" row) are both resolved
+// server-side in the Server Action, never taken from the client -- so
+// neither field appears here, unlike addItemSchema above.
+export const quickAddItemSchema = z.object({
+  title: z.string().trim().min(1, "Title is required"),
+
+  categoryId: z.preprocess(
+    nullToEmptyString,
+    z.string().trim().min(1, "Category is required").uuid("Select a valid category"),
+  ),
+});
+
+export type QuickAddItemInput = z.infer<typeof quickAddItemSchema>;
+
 // Shared result shape for the Add Item Server Action, consumed via
 // useActionState in AddItemForm.tsx -- same shape as AuthFormState in
 // lib/validation/auth.ts (formError for a page-level message, fieldErrors
