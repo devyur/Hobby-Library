@@ -51,4 +51,5 @@ npm is the package manager (`package-lock.json` is committed).
 - `npm run build` — production build (also type-checks)
 - `npm run start` — run the production build
 - `npm run test` — run the Vitest test suite once (`vitest run`), exits non-zero on failure
+- `npm run test:e2e` — run the Playwright end-to-end suite (`playwright test`) headless against Chromium; starts `npm run dev` automatically. Use this (via `npx playwright test`, or the MCP/`claude-in-chrome`-style tools if available) for manual verification of anything needing a real browser — forms, redirects, cookies, auth flows — instead of hand-constructing `curl` requests against Next.js Server Actions, which is fragile (see issue #9's QA history). Spec files live under `e2e/`; Vitest is configured to ignore that directory.
 - `npm run lint` — run ESLint
