@@ -4,10 +4,18 @@ A personal cross-media library for tracking things to watch, read, listen to, an
 
 ## Status
 
-Planning is complete; implementation has not started. The V1 backlog is 32 tasks in `_docs/tasks.md`, each also filed as a GitHub issue (#1–#32) on `devyur/Hobby-Library` — work through them roughly in order starting with #1. Each task is written to be self-contained (it names which doc to check for detail), so a fresh session can pick up any task without reading prior history.
+Planning is complete; implementation has not started. Work happens through an orchestrator/subagent process, not directly in the main session — see `_docs/process.md` for the full lifecycle: pick the next open GitHub issue, PM grooms it, Engineer implements it, QA verifies it against acceptance criteria, orchestrator closes it on PASS (back to Engineer on FAIL).
+
+The raw V1 backlog is 32 tasks in `_docs/tasks.md`, each filed as a GitHub issue (#1–#32) on `devyur/Hobby-Library` — work through them roughly in order starting with #1. Each was written to be self-contained (it names which doc to check for detail), but per `_docs/process.md` the PM still regrooms an issue into `_docs/task-template.md`'s format before an engineer touches it.
 
 ## Docs map (`_docs/`)
 
+Process (how work gets done):
+- `process.md` — the orchestrator/subagent lifecycle
+- `task-template.md` — the four-section format (Goal, Acceptance criteria, Out of scope, Constraints) the PM rewrites each issue into
+- `team/pm.md`, `team/software-engineer.md`, `team/qa-engineer.md` — role instructions for each subagent
+
+Product/design (what to build):
 - `plan.md` — product scope/spec, V1 must-haves, and the running log of what's decided vs. still open
 - `database-schema.md` — full Postgres/Supabase schema: tables, RLS model, storage buckets, search approach
 - `subtypes-and-tags.md` — finalized predefined subtype lists per category and predefined tags
