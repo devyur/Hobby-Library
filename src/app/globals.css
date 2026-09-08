@@ -1,26 +1,119 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens — _docs/ui-style-guide.md §1 (color) and §2 (typography).
+ * Light values live on :root as the default/fallback. Dark values apply in
+ * two cases (per ui-style-guide.md §4 + issue #8's acceptance criteria):
+ *   1. `data-theme="dark"` is set explicitly on <html> (manual override,
+ *      written by ThemeToggle.tsx / the pre-paint script in layout.tsx).
+ *   2. No `data-theme` attribute is present at all yet, and the OS/browser
+ *      reports `prefers-color-scheme: dark` — the `:root:not([data-theme])`
+ *      guard below means this branch never fires once an explicit
+ *      `data-theme="light"` or `"dark"` attribute exists, so an explicit
+ *      light choice always wins over a dark system preference.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --bg: #FAFAF9;
+  --surface: #FFFFFF;
+  --border: #E7E5E4;
+  --text-primary: #1C1917;
+  --text-secondary: #78716C;
+  --accent: #4F46E5;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --status-planned-bg: #F1F5F9;
+  --status-planned-text: #64748B;
+  --status-ongoing-bg: #FEF3C7;
+  --status-ongoing-text: #D97706;
+  --status-completed-bg: #DCFCE7;
+  --status-completed-text: #16A34A;
+  --status-dropped-bg: #FFE4E6;
+  --status-dropped-text: #E11D48;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme]) {
+    --bg: #1C1E21;
+    --surface: #26282C;
+    --border: #35373C;
+    --text-primary: #F4F4F3;
+    --text-secondary: #9A9A97;
+    --accent: #818CF8;
+
+    --status-planned-bg: #334155;
+    --status-planned-text: #CBD5E1;
+    --status-ongoing-bg: #78350F;
+    --status-ongoing-text: #FCD34D;
+    --status-completed-bg: #14532D;
+    --status-completed-text: #86EFAC;
+    --status-dropped-bg: #881337;
+    --status-dropped-text: #FDA4AF;
   }
 }
 
+:root[data-theme="dark"] {
+  --bg: #1C1E21;
+  --surface: #26282C;
+  --border: #35373C;
+  --text-primary: #F4F4F3;
+  --text-secondary: #9A9A97;
+  --accent: #818CF8;
+
+  --status-planned-bg: #334155;
+  --status-planned-text: #CBD5E1;
+  --status-ongoing-bg: #78350F;
+  --status-ongoing-text: #FCD34D;
+  --status-completed-bg: #14532D;
+  --status-completed-text: #86EFAC;
+  --status-dropped-bg: #881337;
+  --status-dropped-text: #FDA4AF;
+}
+
+/* Tailwind v4 CSS-first theme mapping (no tailwind.config.ts — see #1/#8):
+ * every custom property above is exposed as a Tailwind utility, e.g.
+ * bg-bg, bg-surface, border-border, text-text-primary, text-text-secondary,
+ * bg-accent/text-accent, bg-status-ongoing-bg, text-status-ongoing-text. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-accent: var(--accent);
+
+  --color-status-planned-bg: var(--status-planned-bg);
+  --color-status-planned-text: var(--status-planned-text);
+  --color-status-ongoing-bg: var(--status-ongoing-bg);
+  --color-status-ongoing-text: var(--status-ongoing-text);
+  --color-status-completed-bg: var(--status-completed-bg);
+  --color-status-completed-text: var(--status-completed-text);
+  --color-status-dropped-bg: var(--status-dropped-bg);
+  --color-status-dropped-text: var(--status-dropped-text);
+
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+/*
+ * Rating badge — ui-style-guide.md §1 "Rating badge": neutral, not
+ * color-scaled by value (color stays reserved for status). Plain pill using
+ * --surface/--border/--text-primary, format "9/10". This is a token/utility
+ * only: no component consumes it yet (#16 builds RatingBadge).
+ */
+@utility rating-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  border-width: 1px;
+  border-color: var(--border);
+  background-color: var(--surface);
+  color: var(--text-primary);
+  padding-inline: 0.5rem;
+  padding-block: 0.125rem;
+  font-size: 0.75rem;
+  font-weight: 500;
 }

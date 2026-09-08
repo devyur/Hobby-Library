@@ -155,6 +155,8 @@ Primary key `(list_id, item_id)`.
 
 Added per the UI style guide decision to persist theme choice server-side (so it syncs across devices) rather than in `localStorage` — and since that requires a per-user preferences row anyway, the already-decided "remember last screen" and "remember sort" requirements are folded into the same table rather than each inventing its own storage.
 
+`theme` and `list_view_mode` each carry a check constraint restricting them to the enumerated values above (or `null`) — `theme in ('light', 'dark')`, `list_view_mode in ('list', 'card')`. `default_sort` is left unconstrained: its value set isn't enumerated anywhere yet (`#24` defines it), so a check constraint would just be guessing. Added in the `user_preferences` migration, see [#8](https://github.com/devyur/Hobby-Library/issues/8).
+
 ---
 
 ## 4. Row-Level Security
