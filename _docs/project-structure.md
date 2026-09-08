@@ -39,7 +39,7 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 
 - `lib/supabase/client.ts` — browser Supabase client
 - `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
-- `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB
+- `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB. Regenerating via the literal CLI requires either Docker/Podman on `PATH` (for `--db-url`) or a Supabase personal access token via `SUPABASE_ACCESS_TOKEN` (for `--linked`/`--project-id`). In an environment with neither (e.g. a Docker-less sandbox with no PAT configured), `@supabase/postgrest-typegen` — the same introspection/codegen engine the CLI wraps — run directly against the live schema is the accepted fallback, provided the resulting file's header documents which tool generated it and why the literal CLI wasn't used. See [#7](https://github.com/devyur/Hobby-Library/issues/7) for the decision record.
 - `lib/actions/` — Server Actions grouped by domain (`items.ts`, `tags.ts`, `lists.ts`, `auth.ts`)
 - `lib/queries/` — reusable read queries (`getItems`, `getDashboardStats`, …)
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
