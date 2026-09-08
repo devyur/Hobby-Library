@@ -1,0 +1,125 @@
+# Project Folder Structure — Decisions (Draft V1)
+
+Target: Next.js (App Router) + TypeScript + Tailwind + Supabase. No code yet — this is the layout and the reasoning behind it.
+
+---
+
+## 1. Routing: Next.js App Router, with route groups
+
+**Decision:** App Router (not the older Pages Router), with two route groups:
+- `(auth)` — public pages: login, register
+- `(app)` — everything behind auth, sharing one layout (the nav shell)
+
+**Decision:** the category library view is a **dynamic route** `[category]/`, not four separate folders (`games/`, `books/`, `audio/`, `video/`). This follows directly from the earlier decision that `categories` is a DB-driven table, not a fixed set — the route, the nav, and the page all resolve the category from the database at request time, so adding "Journeys" or "Sport" later needs zero new routes or files.
+
+**Decision:** reads happen directly in Server Components (React Server Components query Supabase server-side, no client-side fetch needed for initial page load); writes go through **Server Actions**, not a separate REST/GraphQL API layer. This avoids hand-building an API layer for a single-consumer app — it's the standard low-ceremony pattern for Next.js + Supabase and directly serves priority #1 in the plan ("simple development"). An `app/api/` route is kept only for the one case that doesn't fit a Server Action well: the JSON/CSV **export download** endpoint.
+
+---
+
+## 2. `src/` directory
+
+**Decision:** application code lives under `src/`, keeping the repo root reserved for config files and the `_docs/`/`supabase/` folders. Purely a cleanliness convention — no functional effect.
+
+---
+
+## 3. `components/` — hybrid organization
+
+**Decision:** split between generic reusable primitives and domain-specific components, rather than one flat folder or one folder per page:
+- `components/ui/` — generic primitives (Button, Card, Modal, Input, Badge…). Sourced from **shadcn/ui** (Tailwind-based, copied into the repo rather than pulled in as an opaque dependency, so components stay fully editable and there's no library lock-in).
+- `components/items/` — item-specific UI (ItemCard, ItemListRow, ItemForm, StatusBadge, RatingStars…)
+- `components/dashboard/` — stat tiles, charts
+- `components/lists/` — custom list UI
+- `components/nav/` — the main nav shell, which renders its tabs **dynamically from the `categories` table** (per the earlier decision)
+
+Why this split and not "one folder per route": several components (ItemCard, StatusBadge) are reused across the dashboard, category views, and list views — domain folders keep them discoverable without duplicating them per page.
+
+---
+
+## 4. `lib/` — everything non-visual
+
+- `lib/supabase/client.ts` — browser Supabase client
+- `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
+- `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB
+- `lib/actions/` — Server Actions grouped by domain (`items.ts`, `tags.ts`, `lists.ts`, `auth.ts`)
+- `lib/queries/` — reusable read queries (`getItems`, `getDashboardStats`, …)
+- `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
+- `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
+
+`src/middleware.ts` — Next.js middleware, used for Supabase session refresh on each request (standard requirement for Supabase SSR auth).
+
+---
+
+## 5. `supabase/` — schema as code
+
+- `supabase/migrations/` — the SQL migration files; `_docs/database-schema.md` becomes the source of truth for *design*, these migrations become the source of truth for the *actual* schema once implementation starts
+- `supabase/seed.sql` — inserts the predefined categories/subtypes/tags from `_docs/subtypes-and-tags.md`
+
+Keeping schema as versioned SQL (via the Supabase CLI) rather than only clicking through the dashboard means the schema is reproducible, diffable in git, and restorable if the project ever needs to be rebuilt from scratch — directly serves the plan's "easy backup" and "maintainable codebase" priorities.
+
+---
+
+## 6. Naming conventions
+
+- Route segment folders: `kebab-case`
+- Component files: `PascalCase.tsx`
+- Utility/hook/action files: `camelCase.ts`
+
+---
+
+## Full tree
+
+```
+Hobby Library/
+├── _docs/
+├── supabase/
+│   ├── migrations/
+│   └── seed.sql
+├── src/
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   ├── login/page.tsx
+│   │   │   └── register/page.tsx
+│   │   ├── (app)/
+│   │   │   ├── layout.tsx              # nav shell
+│   │   │   ├── dashboard/page.tsx
+│   │   │   ├── [category]/
+│   │   │   │   ├── page.tsx            # library list/card view + filters
+│   │   │   │   └── [itemId]/page.tsx   # item detail/edit
+│   │   │   ├── lists/
+│   │   │   │   ├── page.tsx
+│   │   │   │   └── [listId]/page.tsx
+│   │   │   ├── trash/page.tsx
+│   │   │   └── settings/page.tsx
+│   │   ├── api/
+│   │   │   └── export/route.ts
+│   │   ├── layout.tsx                  # root layout
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── ui/
+│   │   ├── items/
+│   │   ├── dashboard/
+│   │   ├── lists/
+│   │   └── nav/
+│   ├── lib/
+│   │   ├── supabase/
+│   │   │   ├── client.ts
+│   │   │   ├── server.ts
+│   │   │   └── types.ts
+│   │   ├── actions/
+│   │   ├── queries/
+│   │   ├── validation/
+│   │   └── constants.ts
+│   └── middleware.ts
+├── public/
+├── .env.example
+├── next.config.ts
+├── tailwind.config.ts
+├── tsconfig.json
+└── package.json
+```
+
+---
+
+## Status
+
+Finalized for V1.

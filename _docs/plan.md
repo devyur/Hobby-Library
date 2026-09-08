@@ -702,22 +702,38 @@ When selecting the technology stack, prioritize:
 
 The next planning stage should determine:
 
-- exact subtype lists
-- exact predefined tags
-- database schema
-- technology stack
-- hosting/deployment solution
-- authentication provider
-- database provider
-- file/image storage solution
-- UI visual direction
-- exact dashboard statistics
-- exact recommendation algorithm
-- metadata sources/APIs
-- whether attachments are worth keeping
-- security/authentication requirements
-- backup strategy
-- project folder/code architecture
-- V1 milestone breakdown
+- ~~exact subtype lists~~ — decided, see `subtypes-and-tags.md`
+- ~~exact predefined tags~~ — decided, see `subtypes-and-tags.md`
+- ~~database schema~~ — decided, see `database-schema.md`
+- ~~technology stack~~ — decided, see below
+- ~~hosting/deployment solution~~ — decided (Vercel + Supabase), see below
+- ~~authentication provider~~ — decided (Supabase Auth), see below
+- ~~database provider~~ — decided (Supabase/Postgres), see below
+- ~~file/image storage solution~~ — decided (Supabase Storage), see `database-schema.md` §7
+- ~~project folder/code architecture~~ — decided, see `project-structure.md`
+- ~~UI visual direction~~ — decided, see `ui-direction.md` and `ui-style-guide.md`
+- exact dashboard statistics — loosely scoped in §14 above, not finalized as concrete widgets
+- exact recommendation algorithm — loosely scoped in §14 above, not finalized
+- metadata sources/APIs — deliberately deferred; optional future enhancement, not required for V1
+- whether attachments are worth keeping — kept in the schema (`item_attachments` table) pending confirmation it doesn't complicate deployment
+- ~~security/authentication requirements beyond RLS~~ — decided: email/password + password reset only, no OAuth for V1, see `tasks.md` task 9
+- backup strategy beyond user-driven export/import — not detailed further
+- ~~V1 milestone breakdown~~ — decided, see `tasks.md`
 
-This document should therefore be treated as the **product scope/specification draft**, not yet the technical implementation plan.
+This document should therefore be treated as the **product scope/specification draft**, together with `database-schema.md`, `subtypes-and-tags.md`, `project-structure.md`, `ui-direction.md`, and `ui-style-guide.md` for the decisions made so far, and `tasks.md` for the ordered V1 backlog (each task also tracked as a GitHub issue). The handful of items still marked open above are either deliberately deferred past V1 or minor enough to resolve inline while doing the relevant task.
+
+---
+
+## Technology stack decision
+
+**Chosen: Next.js + Supabase**
+
+- **Frontend:** Next.js (React) + Tailwind CSS
+- **Database:** Supabase (managed Postgres)
+- **Auth:** Supabase Auth
+- **File/image storage:** Supabase Storage
+- **Hosting:** Vercel (frontend) + Supabase cloud (DB/auth/storage), both on free tiers
+
+Rationale: Postgres fits the relational item/tag/list model well and supports the combined filtering the plan calls for (e.g. Games + RPG + Planned + rating ≥ 8). Supabase bundles DB + auth + row-level security + file storage in one product, minimizing integration work. Row-level security also leaves room for the future public-profile/sharing feature without a schema rewrite.
+
+Known tradeoff: free-tier Supabase projects pause after ~7 days of no API activity and require a manual restore via the Supabase dashboard (not an automatic wake like typical serverless cold starts). Mitigation planned: a small scheduled keep-alive ping (e.g. free GitHub Actions cron) to prevent pausing.
