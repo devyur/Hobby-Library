@@ -161,6 +161,8 @@ Added per the UI style guide decision to persist theme choice server-side (so it
 
 All user-owned tables get RLS policies scoping reads/writes to `auth.uid()` (directly via `user_id`, or via a join to `items.user_id`/`lists.user_id` for child tables). `categories` and global predefined `subtypes`/`tags` rows (`user_id IS NULL`) are readable by all authenticated users, writable only via migration/seed (not through the app).
 
+`list_items`' `insert`/`update` policies additionally require the referenced `item_id` to belong to the same user (an `exists` check against `items.user_id = auth.uid()`, alongside the usual `exists` check that the parent `lists` row belongs to the user). Without this, a user could add another user's item into their own list purely by knowing its id, since owning the list row alone isn't enough to prove ownership of the item being linked into it.
+
 ---
 
 ## 5. Search & filtering (V1)
