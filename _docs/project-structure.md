@@ -77,10 +77,15 @@ Hobby Library/
 ├── src/
 │   ├── app/
 │   │   ├── (auth)/
+│   │   │   ├── layout.tsx              # centered auth card shell
 │   │   │   ├── login/page.tsx
-│   │   │   └── register/page.tsx
+│   │   │   ├── register/page.tsx
+│   │   │   ├── forgot-password/page.tsx
+│   │   │   └── reset-password/page.tsx
+│   │   ├── auth/
+│   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
-│   │   │   ├── layout.tsx              # nav shell
+│   │   │   ├── layout.tsx              # nav shell (#9: bare placeholder until #10)
 │   │   │   ├── dashboard/page.tsx
 │   │   │   ├── [category]/
 │   │   │   │   ├── page.tsx            # library list/card view + filters
