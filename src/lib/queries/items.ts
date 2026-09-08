@@ -95,3 +95,133 @@ export async function getLibraryItems(categoryId: string): Promise<LibraryItem[]
     }),
   );
 }
+
+// Item detail page (issue #13). Every field from plan.md §3 plus the two
+// structural relations (Links, Attachments) the detail page also renders.
+export interface ItemLink {
+  id: string;
+  url: string;
+  label: string | null;
+}
+
+export interface ItemAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export interface ItemDetail {
+  id: string;
+  title: string;
+  status: ItemStatus;
+  rating: number | null;
+  priority: PriorityLevel | null;
+  notes: string | null;
+  review: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  subtypeName: string;
+  tags: string[];
+  coverUrl: string | null;
+  links: ItemLink[];
+  attachments: ItemAttachment[];
+}
+
+// Scoped to both `categoryId` (catches a URL whose `[category]` slug
+// doesn't match the item's real category) and RLS's implicit `user_id =
+// auth.uid()` (catches another user's item -- already indistinguishable
+// from "doesn't exist", by design), plus `deleted_at IS NULL` (catches a
+// soft-deleted item). A malformed-UUID `itemId` makes Postgres return a
+// query error (invalid input syntax, not a thrown JS exception -- postgrest-
+// js never throws for a query-level error) rather than data; that and every
+// other case above all resolve to a `null` return here, so the route's
+// `notFound()` call can't distinguish any of them. Reuses the same signed-
+// URL-for-cover pattern and defensive embedded-resource normalization as
+// getLibraryItems above, in one query per relation (no per-row N+1).
+export async function getItemDetail(
+  categoryId: string,
+  itemId: string,
+): Promise<ItemDetail | null> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("items")
+    .select(
+      `
+      id,
+      title,
+      status,
+      rating,
+      priority,
+      notes,
+      review,
+      created_at,
+      completed_at,
+      subtypes ( name ),
+      item_tags ( tags ( name ) ),
+      item_images ( storage_path, is_cover ),
+      item_links ( id, url, label ),
+      item_attachments ( id, filename, mime_type, size_bytes )
+    `,
+    )
+    .eq("id", itemId)
+    .eq("category_id", categoryId)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  if (error || !data) {
+    if (error) {
+      // A malformed-UUID itemId lands here too -- logged like any other
+      // transient read error, but still resolved to `null` (not-found)
+      // below rather than being surfaced as a 500/unhandled error.
+      console.error("Failed to load item detail:", error.message);
+    }
+    return null;
+  }
+
+  const subtype = Array.isArray(data.subtypes) ? data.subtypes[0] : data.subtypes;
+  const images = Array.isArray(data.item_images) ? data.item_images : [];
+  const coverImage = images.find((image) => image.is_cover);
+
+  let coverUrl: string | null = null;
+  if (coverImage) {
+    const { data: signed } = await supabase.storage
+      .from("covers")
+      .createSignedUrl(coverImage.storage_path, COVER_SIGNED_URL_TTL_SECONDS);
+    coverUrl = signed?.signedUrl ?? null;
+  }
+
+  const tagRows = Array.isArray(data.item_tags) ? data.item_tags : [];
+  const tags = tagRows
+    .map((itemTag) => {
+      const tag = Array.isArray(itemTag.tags) ? itemTag.tags[0] : itemTag.tags;
+      return tag?.name ?? null;
+    })
+    .filter((name): name is string => name !== null);
+
+  const links = Array.isArray(data.item_links) ? data.item_links : [];
+  const attachments = Array.isArray(data.item_attachments) ? data.item_attachments : [];
+
+  return {
+    id: data.id,
+    title: data.title,
+    status: data.status,
+    rating: data.rating,
+    priority: data.priority,
+    notes: data.notes,
+    review: data.review,
+    createdAt: data.created_at,
+    completedAt: data.completed_at,
+    subtypeName: subtype?.name ?? "",
+    tags,
+    coverUrl,
+    links: links.map((link) => ({ id: link.id, url: link.url, label: link.label })),
+    attachments: attachments.map((attachment) => ({
+      id: attachment.id,
+      filename: attachment.filename,
+      mimeType: attachment.mime_type,
+      sizeBytes: attachment.size_bytes,
+    })),
+  };
+}
