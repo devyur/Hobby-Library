@@ -36,7 +36,7 @@ const ONE_PIXEL_PNG = Buffer.from(
 );
 
 test.describe("Category library view (issue #12)", () => {
-  test("empty state: shows the always-visible List/Card toggle and 'No items in {category} yet.' with no items and no Add CTA", async ({
+  test("empty state: shows the always-visible List/Card toggle and 'No items in {category} yet.', plus the Add item entry point from issue #14", async ({
     page,
   }) => {
     const email = randomTestEmail("catlib-empty");
@@ -53,7 +53,11 @@ test.describe("Category library view (issue #12)", () => {
       await expect(page.getByRole("button", { name: "Card" })).toBeVisible();
 
       await expect(page.getByText("No items in Games yet.")).toBeVisible();
-      await expect(page.getByRole("link", { name: /add/i })).toHaveCount(0);
+      // issue #14: the Full Add form's entry point lives in the library view.
+      await expect(page.getByRole("link", { name: "Add item" })).toHaveAttribute(
+        "href",
+        "/add",
+      );
     } finally {
       const userId = await getUserIdByEmail(admin, email);
       if (userId) await admin.auth.admin.deleteUser(userId);

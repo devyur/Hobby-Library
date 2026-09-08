@@ -53,7 +53,7 @@ describe("LibraryView", () => {
     expect(screen.getByRole("button", { name: "Card" })).toBeInTheDocument();
   });
 
-  it('shows the empty state message "No items in {category} yet." and no items, and no Add CTA', () => {
+  it('shows the empty state message "No items in {category} yet." and no items, plus an Add item entry point (issue #14) linking to /add', () => {
     render(
       <LibraryView
         categoryName="Games"
@@ -64,10 +64,10 @@ describe("LibraryView", () => {
     );
 
     expect(screen.getByText("No items in Games yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("link")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /add item/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /add item/i })).toHaveAttribute(
+      "href",
+      "/add",
+    );
   });
 
   it("renders List view rows by default when initialViewMode is list", () => {

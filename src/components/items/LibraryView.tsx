@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -46,29 +47,38 @@ export function LibraryView({
         <h1 className="text-lg font-semibold text-text-primary">
           {categoryName}
         </h1>
-        <div
-          role="group"
-          aria-label="View mode"
-          className="flex gap-1 rounded-md border border-border bg-surface p-1"
-        >
-          <Button
-            type="button"
-            variant={viewMode === "list" ? "default" : "outline"}
-            size="sm"
-            aria-pressed={viewMode === "list"}
-            onClick={() => handleSelect("list")}
-          >
-            List
+        <div className="flex items-center gap-3">
+          {/* Entry point for the Full Add form (issue #14) -- links to the
+              category-agnostic /add route rather than pre-filling this
+              category, since the form's own Category dropdown is what
+              drives its reactive Subtype filtering. */}
+          <Button asChild size="sm">
+            <Link href="/add">Add item</Link>
           </Button>
-          <Button
-            type="button"
-            variant={viewMode === "card" ? "default" : "outline"}
-            size="sm"
-            aria-pressed={viewMode === "card"}
-            onClick={() => handleSelect("card")}
+          <div
+            role="group"
+            aria-label="View mode"
+            className="flex gap-1 rounded-md border border-border bg-surface p-1"
           >
-            Card
-          </Button>
+            <Button
+              type="button"
+              variant={viewMode === "list" ? "default" : "outline"}
+              size="sm"
+              aria-pressed={viewMode === "list"}
+              onClick={() => handleSelect("list")}
+            >
+              List
+            </Button>
+            <Button
+              type="button"
+              variant={viewMode === "card" ? "default" : "outline"}
+              size="sm"
+              aria-pressed={viewMode === "card"}
+              onClick={() => handleSelect("card")}
+            >
+              Card
+            </Button>
+          </div>
         </div>
       </div>
 
