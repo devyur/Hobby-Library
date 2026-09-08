@@ -40,7 +40,7 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 - `lib/supabase/client.ts` — browser Supabase client
 - `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
 - `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB. Regenerating via the literal CLI requires either Docker/Podman on `PATH` (for `--db-url`) or a Supabase personal access token via `SUPABASE_ACCESS_TOKEN` (for `--linked`/`--project-id`). In an environment with neither (e.g. a Docker-less sandbox with no PAT configured), `@supabase/postgrest-typegen` — the same introspection/codegen engine the CLI wraps — run directly against the live schema is the accepted fallback, provided the resulting file's header documents which tool generated it and why the literal CLI wasn't used. See [#7](https://github.com/devyur/Hobby-Library/issues/7) for the decision record.
-- `lib/actions/` — Server Actions grouped by domain (`items.ts`, `tags.ts`, `lists.ts`, `auth.ts`)
+- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, plus `tags.ts`/`lists.ts` once #17/#26 land)
 - `lib/queries/` — reusable read queries (`getItems`, `getDashboardStats`, …)
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
 - `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
@@ -86,15 +86,18 @@ Hobby Library/
 │   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
 │   │   │   ├── layout.tsx              # nav shell (#10)
-│   │   │   ├── dashboard/page.tsx
+│   │   │   ├── dashboard/page.tsx      # stats/recommendations pending #27/#28
+│   │   │   ├── add/
+│   │   │   │   ├── page.tsx            # Full Add form (#14)
+│   │   │   │   └── AddItemForm.tsx
 │   │   │   ├── [category]/
-│   │   │   │   ├── page.tsx            # library list/card view + filters (#10: placeholder until #12)
-│   │   │   │   └── [itemId]/page.tsx   # item detail/edit
+│   │   │   │   ├── page.tsx            # library list/card view (#12); filters pending #22-24
+│   │   │   │   └── [itemId]/page.tsx   # item detail, read-only (#13); editing pending #16
 │   │   │   ├── lists/
 │   │   │   │   ├── page.tsx            # #10: placeholder until #26
 │   │   │   │   └── [listId]/page.tsx
 │   │   │   ├── trash/page.tsx          # #10: placeholder until #25
-│   │   │   └── settings/page.tsx       # #10: placeholder until #11
+│   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11)
 │   │   ├── api/
 │   │   │   └── export/route.ts
 │   │   ├── layout.tsx                  # root layout
@@ -118,10 +121,11 @@ Hobby Library/
 ├── public/
 ├── .env.example
 ├── next.config.ts
-├── tailwind.config.ts
 ├── tsconfig.json
 └── package.json
 ```
+
+Tailwind v4 uses its CSS-first `@theme inline` config (in `src/app/globals.css`) rather than a `tailwind.config.ts` file — see [#8](https://github.com/devyur/Hobby-Library/issues/8), no such file exists.
 
 ---
 
