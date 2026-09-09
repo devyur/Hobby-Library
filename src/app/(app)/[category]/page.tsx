@@ -2,6 +2,8 @@ import { notFound } from "next/navigation";
 
 import { LibraryView, type ViewMode } from "@/components/items/LibraryView";
 import { getLibraryItems } from "@/lib/queries/items";
+import { getSubtypes } from "@/lib/queries/subtypes";
+import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
 
 // Category library view (issue #12): replaces the #10 stub. Keeps the
@@ -13,6 +15,13 @@ import { createClient } from "@/lib/supabase/server";
 // List/Card toggle. `categoryId` is passed through too (issue #22) --
 // LibraryView's search box needs it for the searchLibraryItemsAction calls
 // it makes as the user types, scoping every re-query to this same category.
+//
+// subtypes/tags (issue #23): fetched here the same way AddItemForm's own
+// page does -- getSubtypes() returns every subtype visible to the user
+// across all categories, and LibraryView filters that list down to this
+// category client-side (the same reactive-subtype-list pattern the Full Add
+// form already uses), rather than a category-scoped query. getTags() is
+// already unscoped to any category.
 export default async function CategoryPage({
   params,
 }: {
@@ -40,7 +49,7 @@ export default async function CategoryPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  const [items, preferences] = await Promise.all([
+  const [items, preferences, subtypes, tags] = await Promise.all([
     getLibraryItems(category.id),
     user
       ? supabase
@@ -50,6 +59,8 @@ export default async function CategoryPage({
           .maybeSingle()
           .then(({ data }) => data)
       : Promise.resolve(null),
+    getSubtypes(),
+    getTags(),
   ]);
 
   const initialViewMode: ViewMode =
@@ -62,6 +73,8 @@ export default async function CategoryPage({
       categorySlug={slug}
       items={items}
       initialViewMode={initialViewMode}
+      subtypes={subtypes}
+      tags={tags}
     />
   );
 }

@@ -2,7 +2,11 @@
 
 import { redirect } from "next/navigation";
 
-import { getLibraryItems, type LibraryItem } from "@/lib/queries/items";
+import {
+  getLibraryItems,
+  type LibraryItem,
+  type LibraryItemFilters,
+} from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 import {
   addItemSchema,
@@ -468,4 +472,21 @@ export async function searchLibraryItemsAction(
   searchTerm: string,
 ): Promise<LibraryItem[]> {
   return getLibraryItems(categoryId, searchTerm);
+}
+
+// Server Action backing LibraryView.tsx's filter controls (issue #23) --
+// alongside searchLibraryItemsAction above, same thin-wrapper reasoning
+// (LibraryView is a client component; getLibraryItems needs server
+// context). Takes the search term too (not just filters) so LibraryView can
+// route both the search box and the four filter controls through this one
+// action -- one combined query per the issue's own "read from the same
+// combined query, not two independent, later-merged lists" requirement --
+// rather than reconciling this action's results with a separate
+// searchLibraryItemsAction call.
+export async function filterLibraryItemsAction(
+  categoryId: string,
+  searchTerm: string,
+  filters: LibraryItemFilters,
+): Promise<LibraryItem[]> {
+  return getLibraryItems(categoryId, searchTerm, filters);
 }

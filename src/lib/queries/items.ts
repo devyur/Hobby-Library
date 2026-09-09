@@ -8,7 +8,7 @@ import type { Database } from "@/lib/supabase/types";
 // `items` already scopes reads to `auth.uid()` (database-schema.md §4), so
 // no explicit user_id filter is needed here.
 
-type ItemStatus = Database["public"]["Enums"]["item_status"];
+export type ItemStatus = Database["public"]["Enums"]["item_status"];
 type PriorityLevel = Database["public"]["Enums"]["priority_level"];
 
 export interface LibraryItem {
@@ -27,6 +27,19 @@ export interface LibraryItem {
 // is never used. 1 hour comfortably outlives a single page render/request.
 const COVER_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
+// Filter dimensions added by issue #23, all optional and all AND'd together
+// (and AND'd with searchTerm when both are present) -- subtype/status are
+// single-select (one id/value each), tagIds is a set that OR-matches (any
+// selected tag, not all), minRating is a `rating >= minRating` threshold
+// where a NULL rating never matches once set. See getLibraryItems' own
+// comment below for how each is actually applied.
+export interface LibraryItemFilters {
+  subtypeId?: string;
+  status?: ItemStatus;
+  tagIds?: string[];
+  minRating?: number;
+}
+
 // searchTerm is optional (issue #22): omitted/blank returns the same
 // unfiltered, created_at-desc list as before #22 ever existed. When
 // non-blank, matching itself happens in the database via the
@@ -38,15 +51,30 @@ const COVER_SIGNED_URL_TTL_SECONDS = 60 * 60;
 // in a second query below reusing the exact same select shape as the
 // unfiltered path, rather than a parallel query function -- per the issue's
 // own constraint.
+//
+// filters is optional too (issue #23), extending this same function rather
+// than forking a parallel one (per that issue's own constraint). subtype_id/
+// status/rating are plain `.eq`/`.gte` conditions against `items` below --
+// `.gte("rating", n)` naturally excludes `rating IS NULL` rows since
+// Postgres evaluates `NULL >= n` as NULL (not true), matching the "NULL
+// ratings never match once a threshold is set" acceptance criterion with no
+// extra code. tagIds is resolved via a separate `item_tags` query (an
+// id IN (...) narrowing, same shape as the search RPC's own id list) since
+// it OR-matches across possibly-several tag ids -- not expressible as a
+// single `.eq`. When both a search term and tagIds are active, the two id
+// lists are intersected before being applied, so the final result still
+// satisfies (search term) AND (any selected tag), never just one or the
+// other.
 export async function getLibraryItems(
   categoryId: string,
   searchTerm?: string,
+  filters?: LibraryItemFilters,
 ): Promise<LibraryItem[]> {
   const supabase = await createClient();
 
   const trimmedSearchTerm = searchTerm?.trim() ?? "";
 
-  let matchingIds: string[] | null = null;
+  let searchMatchingIds: string[] | null = null;
   if (trimmedSearchTerm !== "") {
     const { data: matches, error: searchError } = await supabase.rpc("search_item_ids", {
       p_category_id: categoryId,
@@ -58,11 +86,45 @@ export async function getLibraryItems(
       return [];
     }
 
-    matchingIds = (matches ?? []).map((row) => row.id);
-    // Zero matches -- skip the second query entirely rather than pass an
+    searchMatchingIds = (matches ?? []).map((row) => row.id);
+    // Zero matches -- skip every other query entirely rather than pass an
     // empty .in() list (which itself correctly returns zero rows, but
     // there's no point round-tripping for it).
+    if (searchMatchingIds.length === 0) return [];
+  }
+
+  let tagMatchingIds: string[] | null = null;
+  if (filters?.tagIds && filters.tagIds.length > 0) {
+    // item_tags' own RLS (item_tags_select_own, migration
+    // 20260908140000_create_item_relations_tables.sql) already scopes this
+    // to items the signed-in user owns via an EXISTS check, so no explicit
+    // user_id filter is needed here -- same reasoning the rest of this file
+    // already relies on for `items`/`subtypes`/`tags`.
+    const { data: tagMatches, error: tagError } = await supabase
+      .from("item_tags")
+      .select("item_id")
+      .in("tag_id", filters.tagIds);
+
+    if (tagError) {
+      console.error("Failed to filter items by tag:", tagError.message);
+      return [];
+    }
+
+    tagMatchingIds = Array.from(new Set((tagMatches ?? []).map((row) => row.item_id)));
+    if (tagMatchingIds.length === 0) return [];
+  }
+
+  // AND the two id lists together (search term AND tag match) when both are
+  // active, rather than letting a later `.in()` call silently overwrite the
+  // other -- Supabase's query builder only keeps the last `.in()` on a given
+  // column if called twice.
+  let matchingIds: string[] | null = null;
+  if (searchMatchingIds && tagMatchingIds) {
+    const tagIdSet = new Set(tagMatchingIds);
+    matchingIds = searchMatchingIds.filter((id) => tagIdSet.has(id));
     if (matchingIds.length === 0) return [];
+  } else {
+    matchingIds = searchMatchingIds ?? tagMatchingIds;
   }
 
   let query = supabase
@@ -85,6 +147,15 @@ export async function getLibraryItems(
 
   if (matchingIds) {
     query = query.in("id", matchingIds);
+  }
+  if (filters?.subtypeId) {
+    query = query.eq("subtype_id", filters.subtypeId);
+  }
+  if (filters?.status) {
+    query = query.eq("status", filters.status);
+  }
+  if (filters?.minRating !== undefined) {
+    query = query.gte("rating", filters.minRating);
   }
 
   const { data, error } = await query;

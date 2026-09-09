@@ -21,13 +21,22 @@ interface FakeItemsQuery extends PromiseLike<{ data: unknown[] | null; error: { 
   is: ReturnType<typeof vi.fn>;
   order: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
+  gte: ReturnType<typeof vi.fn>;
+}
+
+interface FakeItemTagsQuery
+  extends PromiseLike<{ data: { item_id: string }[] | null; error: { message: string } | null }> {
+  select: ReturnType<typeof vi.fn>;
+  in: ReturnType<typeof vi.fn>;
 }
 
 function fakeSupabase(options: {
   rpcResult?: { data: { id: string }[] | null; error: { message: string } | null };
   itemsResult?: { data: unknown[] | null; error: { message: string } | null };
+  itemTagsResult?: { data: { item_id: string }[] | null; error: { message: string } | null };
 }) {
   const itemsResult = options.itemsResult ?? { data: [], error: null };
+  const itemTagsResult = options.itemTagsResult ?? { data: [], error: null };
 
   const itemsQuery: FakeItemsQuery = {
     select: vi.fn(() => itemsQuery),
@@ -35,17 +44,26 @@ function fakeSupabase(options: {
     is: vi.fn(() => itemsQuery),
     order: vi.fn(() => itemsQuery),
     in: vi.fn(() => itemsQuery),
+    gte: vi.fn(() => itemsQuery),
     then: (onFulfilled, onRejected) => Promise.resolve(itemsResult).then(onFulfilled, onRejected),
+  };
+
+  const itemTagsQuery: FakeItemTagsQuery = {
+    select: vi.fn(() => itemTagsQuery),
+    in: vi.fn(() => itemTagsQuery),
+    then: (onFulfilled, onRejected) =>
+      Promise.resolve(itemTagsResult).then(onFulfilled, onRejected),
   };
 
   const fromMock = vi.fn((table: string) => {
     if (table === "items") return itemsQuery;
+    if (table === "item_tags") return itemTagsQuery;
     throw new Error(`Unexpected table in test: ${table}`);
   });
 
   const rpcMock = vi.fn().mockResolvedValue(options.rpcResult ?? { data: [], error: null });
 
-  return { from: fromMock, rpc: rpcMock, itemsQuery };
+  return { from: fromMock, rpc: rpcMock, itemsQuery, itemTagsQuery };
 }
 
 describe("getLibraryItems", () => {
@@ -124,6 +142,114 @@ describe("getLibraryItems", () => {
     createClientMock.mockResolvedValue(supabase);
 
     const result = await getLibraryItems("cat-1", "term");
+
+    expect(result).toEqual([]);
+    expect(supabase.from).not.toHaveBeenCalledWith("items");
+  });
+});
+
+// Unit coverage for getLibraryItems' filter parameters (issue #23) --
+// subtype/status/rating are asserted as plain `.eq`/`.gte` calls against the
+// `items` query, and tagIds' OR-match + its AND-combination with an active
+// search term are asserted via the two id lists getLibraryItems intersects
+// before ever building the main `items` query. Live matching behavior
+// (RLS, the actual tag join, a real zero-match combination) is covered
+// separately by e2e/filters.spec.ts against the real project.
+describe("getLibraryItems filters", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("applies subtype/status/minRating as .eq/.eq/.gte against the items query", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, {
+      subtypeId: "subtype-1",
+      status: "planned",
+      minRating: 8,
+    });
+
+    expect(supabase.itemsQuery.eq).toHaveBeenCalledWith("subtype_id", "subtype-1");
+    expect(supabase.itemsQuery.eq).toHaveBeenCalledWith("status", "planned");
+    expect(supabase.itemsQuery.gte).toHaveBeenCalledWith("rating", 8);
+  });
+
+  it("with no filters passed, never calls .gte (rating) or the item_tags table", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1");
+
+    expect(supabase.itemsQuery.gte).not.toHaveBeenCalled();
+    expect(supabase.from).not.toHaveBeenCalledWith("item_tags");
+  });
+
+  it("tagIds queries item_tags for any of the selected tags (OR-match), then scopes items to the returned ids", async () => {
+    const supabase = fakeSupabase({
+      itemTagsResult: {
+        data: [{ item_id: "item-1" }, { item_id: "item-2" }, { item_id: "item-1" }],
+        error: null,
+      },
+      itemsResult: { data: [], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, { tagIds: ["tag-a", "tag-b"] });
+
+    expect(supabase.itemTagsQuery.in).toHaveBeenCalledWith("tag_id", ["tag-a", "tag-b"]);
+    // Deduplicated (item-1 appeared twice, once per matching tag).
+    expect(supabase.itemsQuery.in).toHaveBeenCalledWith(
+      "id",
+      expect.arrayContaining(["item-1", "item-2"]),
+    );
+    expect((supabase.itemsQuery.in.mock.calls[0][1] as string[]).length).toBe(2);
+  });
+
+  it("returns an empty list without querying items at all when the tag filter matches zero items", async () => {
+    const supabase = fakeSupabase({ itemTagsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getLibraryItems("cat-1", undefined, { tagIds: ["tag-a"] });
+
+    expect(result).toEqual([]);
+    expect(supabase.from).not.toHaveBeenCalledWith("items");
+  });
+
+  it("returns an empty list (not a thrown error) when the item_tags query itself errors", async () => {
+    const supabase = fakeSupabase({
+      itemTagsResult: { data: null, error: { message: "boom" } },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getLibraryItems("cat-1", undefined, { tagIds: ["tag-a"] });
+
+    expect(result).toEqual([]);
+    expect(supabase.from).not.toHaveBeenCalledWith("items");
+  });
+
+  it("intersects the search-match id list with the tag-match id list (AND, not one overwriting the other) when both are active", async () => {
+    const supabase = fakeSupabase({
+      rpcResult: { data: [{ id: "item-1" }, { id: "item-2" }], error: null },
+      itemTagsResult: { data: [{ item_id: "item-2" }, { item_id: "item-3" }], error: null },
+      itemsResult: { data: [], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", "witch", { tagIds: ["tag-a"] });
+
+    // Only item-2 is in both the search-match and tag-match id lists.
+    expect(supabase.itemsQuery.in).toHaveBeenCalledWith("id", ["item-2"]);
+  });
+
+  it("returns an empty list without querying items when the search and tag id lists don't intersect", async () => {
+    const supabase = fakeSupabase({
+      rpcResult: { data: [{ id: "item-1" }], error: null },
+      itemTagsResult: { data: [{ item_id: "item-2" }], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getLibraryItems("cat-1", "witch", { tagIds: ["tag-a"] });
 
     expect(result).toEqual([]);
     expect(supabase.from).not.toHaveBeenCalledWith("items");
