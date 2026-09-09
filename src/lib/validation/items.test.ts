@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { addItemSchema, quickAddItemSchema } from "./items";
+import { addItemSchema, editItemSchema, quickAddItemSchema } from "./items";
 
 // Unit tests for the shared Zod schema backing the Full Add form (issue
 // #14). Same "client pre-check + server re-check share one schema" role as
@@ -196,5 +196,87 @@ describe("quickAddItemSchema", () => {
       categoryId: "not-a-uuid",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+// Unit tests for the Edit item form's schema (issue #16) -- status/rating/
+// priority/notes/review only. No title/category/subtype fields exist here
+// at all (permanently out of scope for editing), unlike addItemSchema.
+describe("editItemSchema", () => {
+  function minimumValidEdit(overrides: Record<string, unknown> = {}) {
+    return {
+      status: "planned",
+      rating: "",
+      priority: "",
+      notes: "",
+      review: "",
+      ...overrides,
+    };
+  }
+
+  it("accepts status-only input, with rating/priority/notes/review left undefined", () => {
+    const result = editItemSchema.safeParse(minimumValidEdit());
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.rating).toBeUndefined();
+      expect(result.data.priority).toBeUndefined();
+      expect(result.data.notes).toBeUndefined();
+      expect(result.data.review).toBeUndefined();
+    }
+  });
+
+  it("rejects a missing/invalid status", () => {
+    const result = editItemSchema.safeParse(minimumValidEdit({ status: "" }));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((issue) => issue.path[0] === "status")).toBe(
+        true,
+      );
+    }
+  });
+
+  it.each([0, 11, -1])(
+    "rejects a rating of %i (outside 1-10, matching items_rating_check)",
+    (rating) => {
+      const result = editItemSchema.safeParse(minimumValidEdit({ rating: String(rating) }));
+      expect(result.success).toBe(false);
+    },
+  );
+
+  it("accepts a full field set including rating, priority, notes, and review", () => {
+    const result = editItemSchema.safeParse(
+      minimumValidEdit({
+        status: "completed",
+        rating: "8",
+        priority: "medium",
+        notes: "Some notes",
+        review: "Some review",
+      }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.status).toBe("completed");
+      expect(result.data.rating).toBe(8);
+      expect(result.data.priority).toBe("medium");
+      expect(result.data.notes).toBe("Some notes");
+      expect(result.data.review).toBe("Some review");
+    }
+  });
+
+  it("rejects an invalid priority value", () => {
+    const result = editItemSchema.safeParse(minimumValidEdit({ priority: "urgent" }));
+    expect(result.success).toBe(false);
+  });
+
+  it("has no categoryId/subtypeId/title fields at all", () => {
+    const result = editItemSchema.safeParse(
+      minimumValidEdit({ title: "New Title", categoryId: "x", subtypeId: "y" }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("title");
+      expect(result.data).not.toHaveProperty("categoryId");
+      expect(result.data).not.toHaveProperty("subtypeId");
+    }
   });
 });

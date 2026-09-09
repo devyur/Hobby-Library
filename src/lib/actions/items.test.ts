@@ -25,7 +25,7 @@ vi.mock("next/navigation", () => ({
   redirect: (...args: [string]) => redirectMock(...args),
 }));
 
-const { quickAddItemAction } = await import("./items");
+const { quickAddItemAction, updateItemAction } = await import("./items");
 const { initialItemFormState } = await import("@/lib/validation/items");
 
 type FakeRow = Record<string, unknown> | null;
@@ -153,6 +153,167 @@ describe("quickAddItemAction", () => {
 
     expect(result.fieldErrors.title).toBeDefined();
     expect(result.fieldErrors.categoryId).toBeDefined();
+    expect(createClientMock).not.toHaveBeenCalled();
+  });
+});
+
+// Unit coverage for updateItemAction (issue #16), focused on the two things
+// e2e coverage can exercise but not directly inspect the call arguments
+// for: (1) the ownership/not-found check never distinguishing another
+// user's item from a nonexistent one, and (2) the explicit-null-vs-omitted
+// -key clearing behavior -- that a cleared rating/priority/notes/review is
+// written as an explicit `null` in the update payload, never left out of
+// it (which Supabase's `.update()` would silently ignore).
+describe("updateItemAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    redirectMock.mockClear();
+  });
+
+  function editFormData(overrides: Record<string, string> = {}) {
+    const formData = new FormData();
+    formData.set("status", "planned");
+    for (const [key, value] of Object.entries(overrides)) {
+      formData.set(key, value);
+    }
+    return formData;
+  }
+
+  function fakeSupabaseForUpdate(options: {
+    user?: { id: string } | null;
+    item?: FakeRow;
+    category?: FakeRow;
+    updateError?: { message: string } | null;
+  }) {
+    const updateMock = vi.fn((payload: Record<string, unknown>) => {
+      void payload;
+      return { eq: async () => ({ error: options.updateError ?? null }) };
+    });
+
+    const fromMock = vi.fn((table: string) => {
+      if (table === "items") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                is: () => ({
+                  maybeSingle: async () => ({ data: options.item ?? null }),
+                }),
+              }),
+            }),
+          }),
+          update: updateMock,
+        };
+      }
+      if (table === "categories") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: options.category ?? null }) }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table in test: ${table}`);
+    });
+
+    return {
+      from: fromMock,
+      updateMock,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    };
+  }
+
+  it("rejects an unauthenticated request without touching the database", async () => {
+    const supabase = fakeSupabaseForUpdate({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateItemAction("item-1", initialItemFormState, editFormData());
+
+    expect(result.formError).toMatch(/signed in/i);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one -- a plain not-found formError, never a distinguishable RLS/Postgres error", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: null, // .eq("user_id", user.id) excludes another user's row -- same shape as "doesn't exist"
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateItemAction(
+      "someone-elses-item",
+      initialItemFormState,
+      editFormData(),
+    );
+
+    expect(result.formError).toMatch(/could not be found/i);
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("writes explicit null (not an omitted key) for a cleared rating, priority, notes, and review", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(
+      updateItemAction(
+        "item-1",
+        initialItemFormState,
+        // Every clearable field submitted empty -- simulating a save that
+        // clears a previously-set rating/priority/notes/review.
+        editFormData({ status: "ongoing", rating: "", priority: "", notes: "", review: "" }),
+      ),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    expect(supabase.updateMock).toHaveBeenCalledTimes(1);
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload).toEqual({
+      status: "ongoing",
+      rating: null,
+      priority: null,
+      notes: null,
+      review: null,
+    });
+    // Explicit key presence, not just an equal value -- `{ rating: undefined }`
+    // would also satisfy toEqual's rating check but get silently dropped by
+    // Supabase's own JSON serialization before ever reaching Postgres.
+    expect(Object.keys(payload)).toEqual(
+      expect.arrayContaining(["rating", "priority", "notes", "review"]),
+    );
+  });
+
+  it("never includes category_id, subtype_id, or completed_at in the update payload, even when status is set to completed", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(
+      updateItemAction(
+        "item-1",
+        initialItemFormState,
+        editFormData({ status: "completed", rating: "9" }),
+      ),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("category_id");
+    expect(payload).not.toHaveProperty("subtype_id");
+    expect(payload).not.toHaveProperty("completed_at");
+  });
+
+  it("rejects a missing/invalid status client-side-equivalent input before ever calling createClient", async () => {
+    const result = await updateItemAction(
+      "item-1",
+      initialItemFormState,
+      editFormData({ status: "" }),
+    );
+
+    expect(result.fieldErrors.status).toBeDefined();
     expect(createClientMock).not.toHaveBeenCalled();
   });
 });

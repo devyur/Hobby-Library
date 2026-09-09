@@ -3,27 +3,31 @@ import { notFound } from "next/navigation";
 import { CoverThumbnail } from "@/components/items/CoverThumbnail";
 import { ItemAttachments } from "@/components/items/ItemAttachments";
 import { ItemLinks } from "@/components/items/ItemLinks";
-import { NotesReview } from "@/components/items/NotesReview";
-import { PriorityBadge } from "@/components/items/PriorityBadge";
-import { RatingBadge } from "@/components/items/RatingBadge";
-import { StatusPill } from "@/components/items/StatusPill";
-import { TagChips } from "@/components/items/TagChips";
-import { formatDate } from "@/lib/format";
 import { getItemDetail } from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 
-// Item detail page (issue #13): read-only. The category slug -> id lookup
-// is the same one [category]/page.tsx (#12) already uses, unchanged --
-// an unknown slug still 404s. Every other "not found" case (missing item,
-// another user's item via RLS, category/slug mismatch, soft-deleted item,
-// malformed-UUID itemId) collapses inside getItemDetail to a single `null`,
-// which this page turns into the same plain notFound() -- no distinct
-// error page/message, so an other-user's item and a nonexistent one stay
-// indistinguishable and this page never leaks whether an item exists for
-// someone else.
+import { ItemEditForm } from "./ItemEditForm";
+
+// Item detail page (issue #13, view mode; issue #16 adds the inline
+// edit-mode toggle for status/rating/priority/notes/review via
+// ItemEditForm.tsx below -- same route/URL, no dedicated /edit page). The
+// category slug -> id lookup is the same one [category]/page.tsx (#12)
+// already uses, unchanged -- an unknown slug still 404s. Every other "not
+// found" case (missing item, another user's item via RLS, category/slug
+// mismatch, soft-deleted item, malformed-UUID itemId) collapses inside
+// getItemDetail to a single `null`, which this page turns into the same
+// plain notFound() -- no distinct error page/message, so an other-user's
+// item and a nonexistent one stay indistinguishable and this page never
+// leaks whether an item exists for someone else.
 //
 // ui-style-guide.md §3's density exception applies here: spacious/editorial
 // layout, unlike the compact library list/card views.
+//
+// Title, category/subtype label, and cover stay here (never editable, per
+// #16's Out of scope) -- status/rating/priority/notes/review, plus the
+// Added/Completed dates and Tags that visually sit alongside them, are
+// owned by ItemEditForm, a client component that needs its own React state
+// for the view/edit toggle.
 export default async function ItemDetailPage({
   params,
 }: {
@@ -60,38 +64,25 @@ export default async function ItemDetailPage({
           <p className="text-sm text-text-secondary">
             {category.name} · {item.subtypeName}
           </p>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <StatusPill status={item.status} />
-            <RatingBadge rating={item.rating} />
-            <PriorityBadge status={item.status} priority={item.priority} />
-          </div>
-
-          <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-text-secondary">
-            <div className="flex gap-1">
-              <dt className="font-medium text-text-primary">Added:</dt>
-              <dd>{formatDate(item.createdAt)}</dd>
-            </div>
-            {item.completedAt ? (
-              <div className="flex gap-1">
-                <dt className="font-medium text-text-primary">Completed:</dt>
-                <dd>{formatDate(item.completedAt)}</dd>
-              </div>
-            ) : null}
-          </dl>
-
-          {item.tags.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              <h2 className="text-sm font-medium text-text-primary">Tags</h2>
-              {/* Detail page never truncates -- maxVisible = the full tag
-                  count, unlike the library view's default-3 "+N" behavior. */}
-              <TagChips tags={item.tags} maxVisible={item.tags.length} />
-            </div>
-          ) : null}
         </div>
       </div>
 
-      <NotesReview notes={item.notes} review={item.review} />
+      {/* Status/rating/priority/notes/review, plus the Added/Completed
+          dates and Tags that sit alongside them -- view mode by default,
+          toggled into an edit form in place (issue #16). Detail page never
+          truncates tags -- maxVisible = the full tag count, unlike the
+          library view's default-3 "+N" behavior. */}
+      <ItemEditForm
+        itemId={item.id}
+        status={item.status}
+        rating={item.rating}
+        priority={item.priority}
+        notes={item.notes}
+        review={item.review}
+        createdAt={item.createdAt}
+        completedAt={item.completedAt}
+        tags={item.tags}
+      />
 
       <ItemLinks links={item.links} />
 

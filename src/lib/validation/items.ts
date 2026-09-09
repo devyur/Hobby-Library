@@ -89,6 +89,33 @@ export const quickAddItemSchema = z.object({
 
 export type QuickAddItemInput = z.infer<typeof quickAddItemSchema>;
 
+// Edit item form (issue #16): status/rating/priority/notes/review only --
+// title/category/subtype are permanently out of scope for editing (see the
+// issue's Out of scope section), so this schema has no fields for them at
+// all, unlike addItemSchema above. Reuses the same itemStatusValues/
+// priorityLevelValues/emptyToUndefined preprocessing this module already
+// defines for addItemSchema, rather than duplicating them.
+export const editItemSchema = z.object({
+  status: z.enum(itemStatusValues, { message: "Status is required" }),
+
+  rating: z.preprocess(
+    emptyToUndefined,
+    z.coerce
+      .number({ message: "Rating must be a number" })
+      .int("Rating must be a whole number")
+      .min(1, "Rating must be between 1 and 10")
+      .max(10, "Rating must be between 1 and 10")
+      .optional(),
+  ),
+
+  priority: z.preprocess(emptyToUndefined, z.enum(priorityLevelValues).optional()),
+
+  notes: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+  review: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+});
+
+export type EditItemInput = z.infer<typeof editItemSchema>;
+
 // Shared result shape for the Add Item Server Action, consumed via
 // useActionState in AddItemForm.tsx -- same shape as AuthFormState in
 // lib/validation/auth.ts (formError for a page-level message, fieldErrors

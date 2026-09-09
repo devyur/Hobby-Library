@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   addItemSchema,
+  editItemSchema,
   quickAddItemSchema,
   type ItemFormState,
 } from "@/lib/validation/items";
@@ -312,4 +313,103 @@ export async function quickAddItemAction(
   }
 
   redirect(`/${category.slug}`);
+}
+
+// Server Action backing ItemEditForm.tsx (issue #16), bound to a specific
+// item id via `.bind(null, itemId)` in the client component -- so its real
+// signature as passed to useActionState is (prevState, formData), same
+// shape as createItemAction/quickAddItemAction above. Only status, rating,
+// priority, notes, and review are ever read from the client: title,
+// category_id, and subtype_id are permanently out of scope for editing (see
+// the issue's Out of scope section) and never appear in the update payload,
+// and completed_at is never written here either (out of scope, filed as
+// #34) -- it stays whatever it already was.
+//
+// Same client-pre-check + server-re-check shape as createItemAction: a
+// JS-disabled or hand-crafted direct submission is rejected the same way.
+//
+// Ownership/not-found: never relies on the items_update_own RLS policy
+// (user_id = auth.uid()) as the only check -- the explicit
+// .eq("user_id", user.id).is("deleted_at", null) below means a request
+// naming another user's item id (or a soft-deleted one) gets the same
+// plain "not found" formError a raw RLS-filtered zero-row result would
+// produce anyway, never a distinguishable Postgres/RLS error.
+//
+// Explicit-null clearing: parsed.data.rating/priority/notes/review are
+// `T | undefined` (the Zod schema's emptyToUndefined preprocessing), and
+// `value ?? null` below turns each `undefined` into an explicit `null` in
+// the object literal -- the key is always present in the update payload,
+// never omitted. This matters because Supabase's `.update()` only touches
+// keys present in its argument object; an omitted (or `undefined`-valued,
+// which JSON.stringify drops entirely) key leaves the existing DB value
+// untouched instead of clearing it.
+export async function updateItemAction(
+  itemId: string,
+  _prevState: ItemFormState,
+  formData: FormData,
+): Promise<ItemFormState> {
+  const parsed = editItemSchema.safeParse({
+    status: formData.get("status"),
+    rating: formData.get("rating"),
+    priority: formData.get("priority"),
+    notes: formData.get("notes"),
+    review: formData.get("review"),
+  });
+
+  if (!parsed.success) {
+    return { formError: null, fieldErrors: zodFieldErrors(parsed.error.issues) };
+  }
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // request to /login before this route/action is ever reachable.
+    return { formError: "You must be signed in to edit an item.", fieldErrors: {} };
+  }
+
+  // Existence + ownership + not-soft-deleted, all in one query -- same
+  // not-found semantics getItemDetail (lib/queries/items.ts) already
+  // applies for the read side. A request naming another user's item id (or
+  // one that's been soft-deleted) resolves to `null` here, exactly like a
+  // wholly nonexistent id -- never a distinguishable error.
+  const { data: item } = await supabase
+    .from("items")
+    .select("id, category_id")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { formError: "This item could not be found.", fieldErrors: {} };
+  }
+
+  const { data: category } = await supabase
+    .from("categories")
+    .select("slug")
+    .eq("id", item.category_id)
+    .maybeSingle();
+  if (!category) {
+    return { formError: "This item could not be found.", fieldErrors: {} };
+  }
+
+  const { error: updateError } = await supabase
+    .from("items")
+    .update({
+      status: parsed.data.status,
+      rating: parsed.data.rating ?? null,
+      priority: parsed.data.priority ?? null,
+      notes: parsed.data.notes ?? null,
+      review: parsed.data.review ?? null,
+    })
+    .eq("id", itemId);
+
+  if (updateError) {
+    return { formError: "Failed to save changes. Please try again.", fieldErrors: {} };
+  }
+
+  redirect(`/${category.slug}/${itemId}`);
 }
