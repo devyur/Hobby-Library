@@ -162,3 +162,23 @@ Description: Discovered while grooming #24 — needs a product decision first (i
 ## 40. Additional sort options (e.g. Rating, Title A-Z) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/40)
 Goal: Decide whether sort dimensions beyond #24's three (Recently Added, Priority, Status) belong in V1.
 Description: Discovered while grooming #24 — Rating and Title A-Z both came up as plausible additions but aren't in `plan.md` §13's V1 list. Needs a product decision (and a `plan.md` update if approved) before implementation.
+
+## 41. Add-to-list shortcut on item detail page — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/41)
+Goal: Let a user add an item to a list from the item's own detail page, not just from within the list.
+Description: Discovered while grooming #26 — V1 only adds items to a list from `lists/[listId]/page.tsx`'s own picker. Add a shortcut on `[category]/[itemId]/page.tsx` (e.g. alongside Tags/Links/Attachments) that opens a list picker. Needs a product decision on placement/UI before implementation.
+
+## 42. Manual drag-reordering of items within a custom list — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/42)
+Goal: Let a user manually reorder items within a custom list.
+Description: Discovered while grooming #26 — `list_items.sort_order` exists in the schema but #26 ships V1 ordering as plain insertion order only, leaving `sort_order` written at a constant default. Add drag-and-drop (or another reordering control) that persists a per-item `sort_order`, then switch the list's display to sort by it.
+
+## 43. Dashboard consumption/library trends — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/43)
+Goal: Decide whether a consumption/library trends view (e.g. completions or additions over time) belongs in V1's Dashboard.
+Description: Discovered while grooming #27 — `plan.md` §14 lists this alongside #27's seven well-specified metrics but gives no timeframe, chart type, or definition, so #27 deliberately excluded it as too undefined to groom. Needs a product decision on scope before it can be groomed for engineering; may not be worth building for V1 given typical low weekly item-count.
+
+## 44. Smarter/interactive dashboard recommendations (dismiss, refresh, weighted ranking) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/44)
+Goal: Let a user dismiss/refresh individual recommendations, or replace #28's four independent picks with a weighted ranking.
+Description: Discovered while grooming #28 — V1 ships four simple, independent picks with no per-item interaction or scoring, per `plan.md` §14's "recommendation logic should remain simple initially." Candidate improvements (dismiss/snooze, manual shuffle, weighted composite ranking) tracked here as a placeholder, not yet groomed.
+
+## 45. CSV export (secondary format) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/45)
+Goal: Let a user download their library as CSV in addition to JSON.
+Description: Discovered while grooming #29 — `plan.md` §23/`database-schema.md` §8 both treat CSV as optional/secondary to JSON. #29 was scoped to JSON only since CSV needs its own product decision (one CSV per entity vs. a flattened items CSV vs. something else, and whether CSV round-trips through #30 at all) that doesn't have an obvious answer and isn't needed for #30's dependency on #29's JSON shape to stay unambiguous.
