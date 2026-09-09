@@ -132,6 +132,8 @@ export interface ItemDetail {
   review: string | null;
   createdAt: string;
   completedAt: string | null;
+  categoryId: string;
+  subtypeId: string;
   subtypeName: string;
   tags: ItemTag[];
   coverUrl: string | null;
@@ -169,6 +171,8 @@ export async function getItemDetail(
       review,
       created_at,
       completed_at,
+      category_id,
+      subtype_id,
       subtypes ( name ),
       item_tags ( tags ( id, name ) ),
       item_images ( storage_path, is_cover ),
@@ -224,6 +228,8 @@ export async function getItemDetail(
     review: data.review,
     createdAt: data.created_at,
     completedAt: data.completed_at,
+    categoryId: data.category_id,
+    subtypeId: data.subtype_id,
     subtypeName: subtype?.name ?? "",
     tags,
     coverUrl,

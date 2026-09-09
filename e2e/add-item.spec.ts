@@ -284,10 +284,16 @@ test.describe("Full Add form (issue #14)", () => {
       await page.getByRole("button", { name: /^add item$/i }).click();
 
       // Rejected server-side: stays on /add with a friendly field error,
-      // not an unhandled 500 or a silently-created row.
+      // not an unhandled 500 or a silently-created row. Longer-than-default
+      // timeout: this waits on a real Server Action round trip (category +
+      // subtype lookups, then the rejection) against the live project under
+      // parallel-worker contention -- same pre-existing live-latency flake
+      // class as the timeout bumps in item-tags.spec.ts, unrelated to any
+      // code this issue (#18) touches (createItemAction's own subtype check
+      // is unchanged here).
       await expect(
         page.getByText(/subtype does not belong to the selected category/i),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 15_000 });
       expect(page.url()).toContain("/add");
 
       const { data: items } = await user

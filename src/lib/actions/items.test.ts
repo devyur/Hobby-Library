@@ -157,13 +157,18 @@ describe("quickAddItemAction", () => {
   });
 });
 
-// Unit coverage for updateItemAction (issue #16), focused on the two things
-// e2e coverage can exercise but not directly inspect the call arguments
-// for: (1) the ownership/not-found check never distinguishing another
-// user's item from a nonexistent one, and (2) the explicit-null-vs-omitted
-// -key clearing behavior -- that a cleared rating/priority/notes/review is
-// written as an explicit `null` in the update payload, never left out of
-// it (which Supabase's `.update()` would silently ignore).
+// Unit coverage for updateItemAction (issue #16; subtype editing added in
+// #18), focused on the things e2e coverage can exercise but not directly
+// inspect the call arguments for: (1) the ownership/not-found check never
+// distinguishing another user's item from a nonexistent one, (2) the
+// explicit-null-vs-omitted-key clearing behavior -- that a cleared rating/
+// priority/notes/review is written as an explicit `null` in the update
+// payload, never left out of it (which Supabase's `.update()` would
+// silently ignore), and (3) the new subtype_id cross-check -- that a
+// submitted subtype not belonging to (or not visible within) the item's own
+// category is rejected before ever reaching `.update()`.
+const VALID_SUBTYPE_ID = "33333333-3333-4333-8333-333333333333";
+
 describe("updateItemAction", () => {
   beforeEach(() => {
     createClientMock.mockReset();
@@ -173,6 +178,7 @@ describe("updateItemAction", () => {
   function editFormData(overrides: Record<string, string> = {}) {
     const formData = new FormData();
     formData.set("status", "planned");
+    formData.set("subtypeId", VALID_SUBTYPE_ID);
     for (const [key, value] of Object.entries(overrides)) {
       formData.set(key, value);
     }
@@ -183,6 +189,7 @@ describe("updateItemAction", () => {
     user?: { id: string } | null;
     item?: FakeRow;
     category?: FakeRow;
+    subtype?: FakeRow;
     updateError?: { message: string } | null;
   }) {
     const updateMock = vi.fn((payload: Record<string, unknown>) => {
@@ -209,6 +216,17 @@ describe("updateItemAction", () => {
         return {
           select: () => ({
             eq: () => ({ maybeSingle: async () => ({ data: options.category ?? null }) }),
+          }),
+        };
+      }
+      if (table === "subtypes") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                or: () => ({ maybeSingle: async () => ({ data: options.subtype ?? null }) }),
+              }),
+            }),
           }),
         };
       }
@@ -254,6 +272,7 @@ describe("updateItemAction", () => {
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
       category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
     });
     createClientMock.mockResolvedValue(supabase);
 
@@ -271,6 +290,7 @@ describe("updateItemAction", () => {
     const payload = supabase.updateMock.mock.calls[0][0];
     expect(payload).toEqual({
       status: "ongoing",
+      subtype_id: VALID_SUBTYPE_ID,
       rating: null,
       priority: null,
       notes: null,
@@ -284,11 +304,12 @@ describe("updateItemAction", () => {
     );
   });
 
-  it("never includes category_id, subtype_id, or completed_at in the update payload, even when status is set to completed", async () => {
+  it("includes the submitted subtype_id but never category_id or completed_at in the update payload, even when status is set to completed", async () => {
     const supabase = fakeSupabaseForUpdate({
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
       category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
     });
     createClientMock.mockResolvedValue(supabase);
 
@@ -301,9 +322,36 @@ describe("updateItemAction", () => {
     ).rejects.toThrow("REDIRECT:/games/item-1");
 
     const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload.subtype_id).toBe(VALID_SUBTYPE_ID);
     expect(payload).not.toHaveProperty("category_id");
-    expect(payload).not.toHaveProperty("subtype_id");
     expect(payload).not.toHaveProperty("completed_at");
+  });
+
+  it("rejects a subtype that doesn't belong to (or isn't visible within) the item's own category, without ever calling update", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      subtype: null, // not found for this category_id/user -- mismatched category or another user's private subtype
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateItemAction("item-1", initialItemFormState, editFormData());
+
+    expect(result.fieldErrors.subtypeId).toMatch(/does not belong to this item's category/i);
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a missing subtype client-side-equivalent input before ever calling createClient", async () => {
+    const result = await updateItemAction(
+      "item-1",
+      initialItemFormState,
+      editFormData({ subtypeId: "" }),
+    );
+
+    expect(result.fieldErrors.subtypeId).toBeDefined();
+    expect(createClientMock).not.toHaveBeenCalled();
   });
 
   it("rejects a missing/invalid status client-side-equivalent input before ever calling createClient", async () => {

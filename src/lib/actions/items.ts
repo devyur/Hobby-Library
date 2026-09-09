@@ -315,15 +315,15 @@ export async function quickAddItemAction(
   redirect(`/${category.slug}`);
 }
 
-// Server Action backing ItemEditForm.tsx (issue #16), bound to a specific
-// item id via `.bind(null, itemId)` in the client component -- so its real
-// signature as passed to useActionState is (prevState, formData), same
-// shape as createItemAction/quickAddItemAction above. Only status, rating,
-// priority, notes, and review are ever read from the client: title,
-// category_id, and subtype_id are permanently out of scope for editing (see
-// the issue's Out of scope section) and never appear in the update payload,
-// and completed_at is never written here either (out of scope, filed as
-// #34) -- it stays whatever it already was.
+// Server Action backing ItemEditForm.tsx (issue #16; subtype editing added
+// in #18), bound to a specific item id via `.bind(null, itemId)` in the
+// client component -- so its real signature as passed to useActionState is
+// (prevState, formData), same shape as createItemAction/quickAddItemAction
+// above. status, rating, priority, subtype_id, notes, and review are read
+// from the client -- title and category_id remain permanently out of scope
+// for editing (see the issue's Out of scope section) and never appear in the
+// update payload, and completed_at is never written here either (out of
+// scope, filed as #34) -- it stays whatever it already was.
 //
 // Same client-pre-check + server-re-check shape as createItemAction: a
 // JS-disabled or hand-crafted direct submission is rejected the same way.
@@ -350,6 +350,7 @@ export async function updateItemAction(
 ): Promise<ItemFormState> {
   const parsed = editItemSchema.safeParse({
     status: formData.get("status"),
+    subtypeId: formData.get("subtypeId"),
     rating: formData.get("rating"),
     priority: formData.get("priority"),
     notes: formData.get("notes"),
@@ -396,10 +397,37 @@ export async function updateItemAction(
     return { formError: "This item could not be found.", fieldErrors: {} };
   }
 
+  // subtype_id must belong to the item's own (unchanged) category_id and be
+  // visible to this user -- predefined (user_id IS NULL) or their own custom
+  // row -- same cross-check createItemAction runs before its insert. The
+  // Subtype picker's own options list already only ever offers this
+  // category's subtypes, so a mismatch is unreachable through normal
+  // interaction, but a tampered/direct submission could still send one.
+  // items_check_subtype_category's trigger (#18's migration) would also
+  // reject this at the database level, but that's a second line of defense,
+  // never relied on alone -- same belt-and-suspenders reasoning as
+  // createItemAction.
+  const { data: subtype } = await supabase
+    .from("subtypes")
+    .select("id")
+    .eq("id", parsed.data.subtypeId)
+    .eq("category_id", item.category_id)
+    .or(`user_id.is.null,user_id.eq.${user.id}`)
+    .maybeSingle();
+  if (!subtype) {
+    return {
+      formError: null,
+      fieldErrors: {
+        subtypeId: "Selected subtype does not belong to this item's category",
+      },
+    };
+  }
+
   const { error: updateError } = await supabase
     .from("items")
     .update({
       status: parsed.data.status,
+      subtype_id: parsed.data.subtypeId,
       rating: parsed.data.rating ?? null,
       priority: parsed.data.priority ?? null,
       notes: parsed.data.notes ?? null,
@@ -408,6 +436,19 @@ export async function updateItemAction(
     .eq("id", itemId);
 
   if (updateError) {
+    // Second line of defense against items_check_subtype_category (see the
+    // explicit cross-check above) -- not expected to ever fire given that
+    // check, but a raw Postgres exception must never surface as an
+    // unhandled 500 either way. Same message-sniffing pattern insertItemRow
+    // uses for the same trigger.
+    if (updateError.message.includes("does not belong to category_id")) {
+      return {
+        formError: null,
+        fieldErrors: {
+          subtypeId: "Selected subtype does not belong to this item's category",
+        },
+      };
+    }
     return { formError: "Failed to save changes. Please try again.", fieldErrors: {} };
   }
 

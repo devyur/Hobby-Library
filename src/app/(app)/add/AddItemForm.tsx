@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 
+import { SubtypePicker, type SubtypeChoice } from "@/components/items/SubtypePicker";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -57,14 +58,32 @@ export function AddItemForm({
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [categoryId, setCategoryId] = useState("");
   const [subtypeId, setSubtypeId] = useState("");
+  // Local, appendable copy of the subtypes prop (issue #18) -- a subtype
+  // created in this session via SubtypePicker's "+ Create new subtype…"
+  // affordance is appended here so it's immediately selectable (no page
+  // reload/re-fetch), same append-to-local-pool pattern as
+  // ItemTagsEditor.tsx's own `pool` state for tags.
+  const [subtypeOptions, setSubtypeOptions] = useState<SubtypeOption[]>(subtypes);
 
-  const availableSubtypes = subtypes.filter(
+  const availableSubtypes = subtypeOptions.filter(
     (subtype) => subtype.categoryId === categoryId,
   );
 
   function handleCategoryChange(event: React.ChangeEvent<HTMLSelectElement>) {
     setCategoryId(event.target.value);
     setSubtypeId("");
+  }
+
+  function handleSubtypeCreated(subtype: SubtypeChoice) {
+    // createSubtypeAction is create-or-find -- a "created" callback can also
+    // fire for a dedup match against an already-known row (predefined, or
+    // already in this pool), so this only appends when the id isn't already
+    // present, mirroring ItemTagsEditor.tsx's own `addTagLocally` guard.
+    setSubtypeOptions((current) =>
+      current.some((option) => option.id === subtype.id)
+        ? current
+        : [...current, { ...subtype, categoryId }],
+    );
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -160,24 +179,17 @@ export function AddItemForm({
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="subtypeId">Subtype</Label>
-            <Select
+            <SubtypePicker
               id="subtypeId"
-              name="subtypeId"
+              categoryId={categoryId}
               value={subtypeId}
-              onChange={(event) => setSubtypeId(event.target.value)}
+              options={availableSubtypes}
+              onChange={setSubtypeId}
+              onCreated={handleSubtypeCreated}
               disabled={!categoryId}
-              aria-invalid={!!fieldErrors.subtypeId}
-              aria-describedby={fieldErrors.subtypeId ? "subtype-error" : undefined}
-            >
-              <option value="">
-                {categoryId ? "Select a subtype…" : "Select a category first"}
-              </option>
-              {availableSubtypes.map((subtype) => (
-                <option key={subtype.id} value={subtype.id}>
-                  {subtype.name}
-                </option>
-              ))}
-            </Select>
+              ariaInvalid={!!fieldErrors.subtypeId}
+              ariaDescribedBy={fieldErrors.subtypeId ? "subtype-error" : undefined}
+            />
             {fieldErrors.subtypeId ? (
               <p id="subtype-error" className="text-sm text-red-600 dark:text-red-400">
                 {fieldErrors.subtypeId}

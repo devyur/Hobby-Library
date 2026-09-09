@@ -4,6 +4,7 @@ import { CoverThumbnail } from "@/components/items/CoverThumbnail";
 import { ItemAttachments } from "@/components/items/ItemAttachments";
 import { ItemLinks } from "@/components/items/ItemLinks";
 import { getItemDetail } from "@/lib/queries/items";
+import { getSubtypes } from "@/lib/queries/subtypes";
 import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
 
@@ -59,6 +60,18 @@ export default async function ItemDetailPage({
   // already uses.
   const tagSuggestions = await getTags();
 
+  // Subtype picker options for ItemEditForm's edit-mode Subtype control
+  // (issue #18) -- every subtype visible to the signed-in user (predefined +
+  // their own custom rows), pre-filtered here to this item's own
+  // (unchanged) category rather than passing the full cross-category list
+  // and filtering client-side like AddItemForm.tsx does -- there's only ever
+  // one category to filter to on this page, since category itself isn't
+  // editable.
+  const allSubtypes = await getSubtypes();
+  const subtypeOptions = allSubtypes
+    .filter((subtype) => subtype.categoryId === item.categoryId)
+    .map((subtype) => ({ id: subtype.id, name: subtype.name }));
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-10">
       <div className="flex flex-col gap-6 sm:flex-row">
@@ -88,6 +101,9 @@ export default async function ItemDetailPage({
         review={item.review}
         createdAt={item.createdAt}
         completedAt={item.completedAt}
+        categoryId={item.categoryId}
+        subtypeId={item.subtypeId}
+        subtypeOptions={subtypeOptions}
         tags={item.tags}
         tagSuggestions={tagSuggestions}
       />

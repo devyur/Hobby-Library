@@ -104,7 +104,11 @@ test.describe("Tag management on an item (issue #17)", () => {
 
       await page.getByLabel("Add a tag").fill("coz");
       await page.getByRole("button", { name: "cozy" }).click();
-      await expect(page.getByText("cozy")).toBeVisible();
+      // Longer-than-default timeout -- same live-round-trip latency
+      // reasoning as the other timeout bumps in this file (attachTagAction's
+      // own round trip against the live project, same pre-existing flake
+      // class, not something isolated to the typed-submit path either).
+      await expect(page.getByText("cozy")).toBeVisible({ timeout: 15_000 });
 
       // Never entered edit mode for the attach -- still no Status <select>.
       await expect(page.getByLabel("Status")).toHaveCount(0);
@@ -165,7 +169,15 @@ test.describe("Tag management on an item (issue #17)", () => {
       // case + padding, trimmed/case-insensitive match required.
       await page.getByLabel("Add a tag").fill("  COZY  ");
       await page.getByLabel("Add a tag").press("Enter");
-      await expect(page.getByText("cozy")).toBeVisible();
+      // Longer-than-default timeout: the typed-submit path
+      // (addTagToItemAction) does more sequential round trips against the
+      // live project than the autocomplete-click path (attachTagAction)
+      // above -- ownership check, a full visible-tags fetch for the dedup
+      // lookup, then the insert -- which occasionally outran the default
+      // 5s assertion timeout even with no code change here (pre-existing,
+      // unrelated to issue #18; found while getting the full e2e suite
+      // green for that issue's verification).
+      await expect(page.getByText("cozy")).toBeVisible({ timeout: 15_000 });
 
       await expect.poll(() => pollItemTagIds(user, itemId)).toEqual([predefinedTagId]);
 
@@ -207,7 +219,9 @@ test.describe("Tag management on an item (issue #17)", () => {
       await page.goto(`/${categorySlug}/${item1}`);
       await page.getByLabel("Add a tag").fill("  MySpeedrunTag  ");
       await page.getByLabel("Add a tag").press("Enter");
-      await expect(page.getByText("MySpeedrunTag")).toBeVisible();
+      // See the timeout comment on the predefined-tag dedup test above --
+      // same typed-submit round-trip latency, same pre-existing flake.
+      await expect(page.getByText("MySpeedrunTag")).toBeVisible({ timeout: 15_000 });
 
       await expect
         .poll(async () => {
@@ -234,7 +248,8 @@ test.describe("Tag management on an item (issue #17)", () => {
       await page.goto(`/${categorySlug}/${item2}`);
       await page.getByLabel("Add a tag").fill("myspeedruntag");
       await page.getByLabel("Add a tag").press("Enter");
-      await expect(page.getByText("MySpeedrunTag")).toBeVisible();
+      // See the timeout comment above -- same typed-submit round trip.
+      await expect(page.getByText("MySpeedrunTag")).toBeVisible({ timeout: 15_000 });
 
       await expect.poll(() => pollItemTagIds(user, item2)).toEqual([customTagId]);
 
@@ -380,7 +395,9 @@ test.describe("Tag management on an item (issue #17)", () => {
       await page.getByRole("button", { name: "Remove fantasy" }).click();
       await expect(page.getByText("fantasy")).toHaveCount(0);
 
-      await expect.poll(() => pollItemTagIds(user, item1)).toHaveLength(0);
+      // Longer-than-default timeout -- same live-round-trip latency reasoning
+      // as the typed-submit assertions above, this time on the detach path.
+      await expect.poll(() => pollItemTagIds(user, item1), { timeout: 15_000 }).toHaveLength(0);
 
       // The tags row itself survives -- both because it's predefined, and
       // because item2 still references it.

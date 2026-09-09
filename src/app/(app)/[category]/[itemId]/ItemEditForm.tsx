@@ -8,6 +8,7 @@ import { NotesReview } from "@/components/items/NotesReview";
 import { PriorityBadge } from "@/components/items/PriorityBadge";
 import { RatingBadge } from "@/components/items/RatingBadge";
 import { StatusPill } from "@/components/items/StatusPill";
+import { SubtypePicker, type SubtypeChoice } from "@/components/items/SubtypePicker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -38,18 +39,35 @@ const PRIORITY_OPTIONS = [
   { value: "high", label: "High" },
 ] as const;
 
-// Edit item (issue #16). Owns the view/edit toggle in place on the item
-// detail page -- no dedicated /edit route, no modal (none of
-// src/components/ui/ has a Dialog primitive, same finding #15's grooming
-// already made). Cover/links/attachments/title/category-subtype-label stay
-// in page.tsx, rendered unchanged regardless of this component's mode;
-// Added/Completed dates and Tags are rendered here (unchanged in both view
-// and edit mode) since they sit visually alongside the fields this issue
-// does make editable.
+// Edit item (issue #16; Subtype editing added in #18). Owns the view/edit
+// toggle in place on the item detail page -- no dedicated /edit route, no
+// modal (none of src/components/ui/ has a Dialog primitive, same finding
+// #15's grooming already made). Cover/links/attachments/title stay in
+// page.tsx, rendered unchanged regardless of this component's mode; the
+// category·subtype label there also stays unchanged (category itself is
+// still not editable -- #18 only makes subtype editable, scoped to the
+// item's existing category -- and that label reflects the last-saved
+// subtype name, refreshed like every other field via updateItemAction's own
+// redirect back to this same route). Added/Completed dates and Tags are
+// rendered here (unchanged in both view and edit mode) since they sit
+// visually alongside the fields this issue does make editable.
 //
 // Pre-edit rating/review/status are needed at submit time to compute the
 // nudge's before/after diff -- passed down as props from the Server
 // Component (getItemDetail's own read), never re-fetched client-side.
+//
+// categoryId/subtypeId/subtypeOptions (issue #18): categoryId is the item's
+// fixed, unchanged category (never itself editable here -- passed through
+// only so SubtypePicker/createSubtypeAction know which category to scope a
+// new subtype to); subtypeOptions is that category's subtypes (predefined +
+// the user's own), pre-filtered server-side by page.tsx the same way
+// AddItemForm.tsx filters client-side, since there's only ever one category
+// to filter to here. subtypeId is kept as controlled state at this
+// component's top level (like `tags` below), not inside the edit-mode
+// branch, so it survives the view/edit remount instead of resetting -- and
+// handleCancel explicitly reverts it, since a controlled value (unlike the
+// uncontrolled status/rating/priority/notes/review inputs) wouldn't
+// otherwise revert to the pre-edit selection when re-entering edit mode.
 export function ItemEditForm({
   itemId,
   status,
@@ -59,6 +77,9 @@ export function ItemEditForm({
   review,
   createdAt,
   completedAt,
+  categoryId,
+  subtypeId: initialSubtypeId,
+  subtypeOptions: initialSubtypeOptions,
   tags: initialTags,
   tagSuggestions,
 }: {
@@ -70,6 +91,9 @@ export function ItemEditForm({
   review: string | null;
   createdAt: string;
   completedAt: string | null;
+  categoryId: string;
+  subtypeId: string;
+  subtypeOptions: SubtypeChoice[];
   tags: TagOption[];
   tagSuggestions: TagOption[];
 }) {
@@ -83,6 +107,12 @@ export function ItemEditForm({
   // comment: the view/edit toggle below remounts it on every switch, so its
   // attached-tags list has to survive in a parent that doesn't unmount.
   const [tags, setTags] = useState<TagOption[]>(initialTags);
+  // Same "owned at the top level, not inside the edit-mode branch" reasoning
+  // as `tags` -- see this component's own header comment.
+  const [subtypeId, setSubtypeId] = useState(initialSubtypeId);
+  const [subtypeOptions, setSubtypeOptions] = useState<SubtypeChoice[]>(
+    initialSubtypeOptions,
+  );
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [showNudge, setShowNudge] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -101,12 +131,32 @@ export function ItemEditForm({
     setIsEditing(false);
     setClientErrors({});
     setShowNudge(false);
+    // Revert to the pre-edit selection -- subtypeId is controlled state that
+    // survives the isEditing toggle (unlike the uncontrolled status/rating/
+    // priority/notes/review inputs, which simply remount with their
+    // defaultValue), so Cancel must explicitly discard an in-progress
+    // subtype change here. A subtype created via SubtypePicker during this
+    // edit is left in place either way (its own immediate DB write, not part
+    // of this form's submission) -- only the item's own subtype_id selection
+    // is discarded.
+    setSubtypeId(initialSubtypeId);
+  }
+
+  function handleSubtypeCreated(subtype: SubtypeChoice) {
+    // createSubtypeAction is create-or-find -- a "created" callback can also
+    // fire for a dedup match against an already-known row, so this only
+    // appends when the id isn't already present, mirroring
+    // ItemTagsEditor.tsx's own `addTagLocally` guard.
+    setSubtypeOptions((current) =>
+      current.some((option) => option.id === subtype.id) ? current : [...current, subtype],
+    );
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     const formData = new FormData(event.currentTarget);
     const parsed = editItemSchema.safeParse({
       status: formData.get("status"),
+      subtypeId: formData.get("subtypeId"),
       rating: formData.get("rating"),
       priority: formData.get("priority"),
       notes: formData.get("notes"),
@@ -298,6 +348,25 @@ export function ItemEditForm({
             </p>
           ) : null}
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="subtypeId">Subtype</Label>
+        <SubtypePicker
+          id="subtypeId"
+          categoryId={categoryId}
+          value={subtypeId}
+          options={subtypeOptions}
+          onChange={setSubtypeId}
+          onCreated={handleSubtypeCreated}
+          ariaInvalid={!!fieldErrors.subtypeId}
+          ariaDescribedBy={fieldErrors.subtypeId ? "subtype-error" : undefined}
+        />
+        {fieldErrors.subtypeId ? (
+          <p id="subtype-error" className="text-sm text-red-600 dark:text-red-400">
+            {fieldErrors.subtypeId}
+          </p>
+        ) : null}
       </div>
 
       {renderDatesAndTags()}

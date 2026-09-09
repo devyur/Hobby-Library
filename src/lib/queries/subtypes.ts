@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 
 // Reusable read query (issue #14). Fetches every subtype visible to the
 // signed-in user -- global predefined rows (`user_id IS NULL`, seeded by
-// supabase/seed.sql) plus the user's own custom rows (none can exist yet;
-// custom subtype creation is #18, out of scope here) -- with its
-// `category_id`, so AddItemForm.tsx can filter the list client-side on
+// supabase/seed.sql) plus the user's own custom rows (custom subtype
+// creation shipped in #18, via lib/actions/subtypes.ts's
+// createSubtypeAction -- this query only ever handles the read side) --
+// with its `category_id`, so AddItemForm.tsx/ItemEditForm.tsx can filter the
+// list client-side on
 // category change (subtypes_and_tags.md's full predefined set is ≤14 per
 // category / ~46 total, small enough to fetch once and filter in the
 // browser rather than round-tripping on every category change, per the
@@ -27,12 +29,12 @@ export async function getSubtypes(): Promise<SubtypeOption[]> {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // RLS on `subtypes` is `select using (true)` (every row is visible to
-  // every authenticated user, per the reference-tables migration) -- the
-  // explicit user_id filter below isn't load-bearing against the database,
-  // but keeps this query's *intent* ("what this user should see") honest
-  // and matches the issue's stated scope, independent of how permissive the
-  // table's RLS policy happens to be today.
+  // RLS on `subtypes` is `select using (user_id is null or user_id =
+  // auth.uid())` (#18's migration tightened this from the original `using
+  // (true)`) -- the explicit user_id filter below is no longer just
+  // "intent"-documentation on top of a fully-open policy, but it's kept
+  // regardless since it's still correct and this query needs no change from
+  // how it already read.
   let query = supabase.from("subtypes").select("id, category_id, name");
   query = user
     ? query.or(`user_id.is.null,user_id.eq.${user.id}`)

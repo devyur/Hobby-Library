@@ -89,14 +89,26 @@ export const quickAddItemSchema = z.object({
 
 export type QuickAddItemInput = z.infer<typeof quickAddItemSchema>;
 
-// Edit item form (issue #16): status/rating/priority/notes/review only --
-// title/category/subtype are permanently out of scope for editing (see the
-// issue's Out of scope section), so this schema has no fields for them at
-// all, unlike addItemSchema above. Reuses the same itemStatusValues/
-// priorityLevelValues/emptyToUndefined preprocessing this module already
-// defines for addItemSchema, rather than duplicating them.
+// Edit item form (issue #16, subtype editing added in #18):
+// status/rating/priority/subtype/notes/review -- title/category are
+// permanently out of scope for editing (see the issue's Out of scope
+// section), so this schema has no fields for them at all, unlike
+// addItemSchema above. subtypeId is required (not optional like
+// rating/priority) since #16 already required a subtype to exist on every
+// item and this form never lets it go blank -- same
+// `.min(1).uuid()` shape as addItemSchema's own subtypeId, scoped at the
+// Server Action level (updateItemAction) to the item's existing (unchanged)
+// category_id, since that cross-check can't be expressed in a schema alone.
+// Reuses the same itemStatusValues/priorityLevelValues/emptyToUndefined/
+// nullToEmptyString preprocessing this module already defines for
+// addItemSchema, rather than duplicating them.
 export const editItemSchema = z.object({
   status: z.enum(itemStatusValues, { message: "Status is required" }),
+
+  subtypeId: z.preprocess(
+    nullToEmptyString,
+    z.string().trim().min(1, "Subtype is required").uuid("Select a valid subtype"),
+  ),
 
   rating: z.preprocess(
     emptyToUndefined,

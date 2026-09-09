@@ -199,13 +199,17 @@ describe("quickAddItemSchema", () => {
   });
 });
 
-// Unit tests for the Edit item form's schema (issue #16) -- status/rating/
-// priority/notes/review only. No title/category/subtype fields exist here
-// at all (permanently out of scope for editing), unlike addItemSchema.
+// Unit tests for the Edit item form's schema (issue #16; subtypeId added in
+// #18) -- status/subtypeId/rating/priority/notes/review. No title/category
+// fields exist here at all (permanently out of scope for editing), unlike
+// addItemSchema. Unlike rating/priority/notes/review, subtypeId is required
+// -- same `.min(1).uuid()` shape as addItemSchema's own subtypeId -- since
+// every item always has a subtype and this form never lets it go blank.
 describe("editItemSchema", () => {
   function minimumValidEdit(overrides: Record<string, unknown> = {}) {
     return {
       status: "planned",
+      subtypeId: VALID_UUID_B,
       rating: "",
       priority: "",
       notes: "",
@@ -268,15 +272,29 @@ describe("editItemSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("has no categoryId/subtypeId/title fields at all", () => {
+  it("has no categoryId/title fields at all", () => {
     const result = editItemSchema.safeParse(
-      minimumValidEdit({ title: "New Title", categoryId: "x", subtypeId: "y" }),
+      minimumValidEdit({ title: "New Title", categoryId: "x" }),
     );
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).not.toHaveProperty("title");
       expect(result.data).not.toHaveProperty("categoryId");
-      expect(result.data).not.toHaveProperty("subtypeId");
     }
+  });
+
+  it("rejects a missing subtype", () => {
+    const result = editItemSchema.safeParse(minimumValidEdit({ subtypeId: "" }));
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "subtypeId"),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects a non-uuid subtype id (a tampered <option value>)", () => {
+    const result = editItemSchema.safeParse(minimumValidEdit({ subtypeId: "not-a-uuid" }));
+    expect(result.success).toBe(false);
   });
 });

@@ -370,7 +370,17 @@ test.describe("Edit item -- core fields (issue #16)", () => {
       await expect(
         page.getByText(/sounds like you.?re done with this one/i),
       ).toHaveCount(0);
-      await page.waitForURL(`**/${categorySlug}/${itemId}`);
+      // The edit-mode toggle happens in place at the same URL (no /edit
+      // route) -- waitForURL would resolve immediately since the URL already
+      // matches before the round trip even starts, without ever waiting for
+      // it. Wait for the Edit control to reappear instead, same fix as the
+      // "clearing a previously-set rating..." test above; #18's added
+      // subtype cross-check query in updateItemAction made this round trip
+      // slow enough that the stale waitForURL call started failing outright
+      // rather than merely racing.
+      await expect(page.getByRole("button", { name: /^edit$/i })).toBeVisible({
+        timeout: 15_000,
+      });
 
       await expect(page.getByText("8/10")).toBeVisible();
       await expect(page.getByText("High")).toBeVisible();
