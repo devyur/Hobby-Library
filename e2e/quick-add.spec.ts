@@ -83,8 +83,14 @@ test.describe("Quick Add flow (issue #15)", () => {
       // Redirects to the category library view, not a detail page.
       await page.waitForURL("**/games");
       expect(page.url()).not.toMatch(/\/games\/[0-9a-f-]+$/);
-      await expect(page.getByText("Quick Added Game")).toBeVisible();
-      await expect(page.getByText("Planned")).toBeVisible();
+      // Scope to the item's row (a link) rather than a bare page-wide text
+      // match: #23 added a Status filter <select> to LibraryView whose
+      // "Planned" <option> would otherwise collide with the row's status
+      // pill under Playwright's strict-mode locators -- same convention as
+      // category-library.spec.ts's eldenRow/hollowRow/hadesRow scoping.
+      const itemRow = page.getByRole("link", { name: /Quick Added Game/ });
+      await expect(itemRow).toBeVisible();
+      await expect(itemRow.getByText("Planned")).toBeVisible();
 
       const user = await createSupabaseUserClient(email, TEST_PASSWORD);
       const { data: items } = await user
