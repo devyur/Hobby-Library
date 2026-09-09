@@ -175,7 +175,13 @@ Similarly, `item_tags_insert_own` (originally #5, revised by #17) additionally r
 
 ## 5. Search & filtering (V1)
 
-Per plan §11, V1 needs partial-word matching, not a query language. Approach: `pg_trgm` trigram GIN indexes on `items.title`, `items.notes`, `items.review`, enabling fast `ILIKE '%term%'` search. Combined filters (category + subtype + status + rating + tags) are plain `WHERE`/`JOIN` queries — no extra schema needed. Full-text search (`tsvector`) is a possible future upgrade, not needed for V1.
+Per plan §11, V1 needs partial-word matching, not a query language. Approach: `pg_trgm` trigram GIN indexes on `items.title`, `items.notes`, `items.review`, enabling fast `ILIKE '%term%'` search directly on those three `items` columns.
+
+**Tags** (issue #22): plan §11 lists tags as a searched field, but `tags` is a separate table reached through the `item_tags` junction, not a column on `items` — it can't share the three indexes above. A tag-name match instead needs an `EXISTS` join, e.g. `EXISTS (SELECT 1 FROM item_tags JOIN tags ON tags.id = item_tags.tag_id WHERE item_tags.item_id = items.id AND tags.name ILIKE '%term%')`, OR'd alongside the title/notes/review `ILIKE`s. `tags.name` gets its own `pg_trgm` trigram GIN index for the same reason as the three `items` columns — without it, that `EXISTS` subquery falls back to a sequential scan over `tags` as the table grows with custom tags.
+
+None of this — the `pg_trgm` extension, or any of the four trigram GIN indexes — exists in a migration yet; nothing filed before #22 has needed it. #22's migration creates the extension and all four indexes together.
+
+Combined filters (category + subtype + status + rating + tags) are a separate concern from this free-text search box — exact-match filtering, not partial-word text search — and are plain `WHERE`/`JOIN` queries needing no extra schema; see issue #23. Full-text search (`tsvector`) is a possible future upgrade, not needed for V1.
 
 ---
 

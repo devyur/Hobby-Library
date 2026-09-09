@@ -1,16 +1,14 @@
 // Generated types for public schema.
 //
 // Provenance note (issue #7, re-generated for issue #8, re-confirmed for
-// issue #17, re-confirmed for issue #18): this sandbox has neither Docker/
-// Podman (required by `supabase gen types typescript --db-url`, which spins
-// up a local Postgres container to introspect) nor a non-interactive
-// Supabase access token (required by `supabase gen types typescript
-// --linked`/`--project-id`, which calls the Management API -- `supabase
-// login` needs an interactive browser). Both were re-confirmed absent for
-// issue #18 (`which docker`/`which podman` -> not found; `supabase gen
-// types typescript --db-url ...` still fails with `LegacyDockerRunError:
-// docker: command not found (podman also not found)`), matching the exact
-// failure documented in #7/#8/#17.
+// issue #17, re-confirmed for issue #18, re-generated for issue #22): this
+// sandbox has neither Docker/Podman (required by `supabase gen types
+// typescript --db-url`, which spins up a local Postgres container to
+// introspect) nor a non-interactive Supabase access token (required by
+// `supabase gen types typescript --linked`/`--project-id`, which calls the
+// Management API -- `supabase login` needs an interactive browser). Both
+// re-confirmed absent for #22 too, matching the exact failure documented in
+// #7/#8/#17/#18.
 //
 // This file is still CLI-generated content, not hand-written: it was
 // produced by running `@supabase/postgrest-typegen` -- the same
@@ -23,14 +21,16 @@
 // only resolves over IPv6, unavailable in this sandbox; the pooler's
 // tenant-routing rejects a wrong-region guess immediately, which is how the
 // right region was found), same connection class used for `db push` in
-// #4-#8/#17/#18. Output is byte-for-byte what that engine produces from the
-// live schema after #18's migration -- unchanged from the prior generation,
-// since #18 (like #17 before it) only added RLS policies/grants and
-// modified a trigger function's body on `subtypes`/`items`, none of which
-// this generator's output (columns/relationships) reflects. Regenerate via
-// the real `supabase` CLI once this repo is `supabase link`ed in an
-// environment with Docker or an access token (see AGENTS.md: regenerate
-// after any schema change).
+// #4-#8/#17/#18/#22. Regenerated for #22's migration (pg_trgm extension +
+// trigram indexes + the new `search_item_ids` function): the `Functions`
+// map below now carries `search_item_ids` (this issue's search RPC) plus
+// `show_limit`/`show_trgm` -- two small helper functions `pg_trgm` itself
+// installs into the `public` schema as a side effect of `create extension
+// pg_trgm` (no schema clause was given, so it landed in the same schema as
+// everything else here, same as every prior migration in this project).
+// Regenerate via the real `supabase` CLI once this repo is `supabase
+// link`ed in an environment with Docker or an access token (see AGENTS.md:
+// regenerate after any schema change).
 
 export type Json =
   | string
@@ -408,7 +408,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      search_item_ids: {
+        Args: { p_category_id: string; p_search_term: string }
+        Returns: {
+          id: string
+        }[]
+      }
+      show_limit: { Args: Record<PropertyKey, never>; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
       item_status: "planned" | "ongoing" | "completed" | "dropped"

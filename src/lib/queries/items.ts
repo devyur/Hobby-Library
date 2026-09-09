@@ -27,10 +27,45 @@ export interface LibraryItem {
 // is never used. 1 hour comfortably outlives a single page render/request.
 const COVER_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
-export async function getLibraryItems(categoryId: string): Promise<LibraryItem[]> {
+// searchTerm is optional (issue #22): omitted/blank returns the same
+// unfiltered, created_at-desc list as before #22 ever existed. When
+// non-blank, matching itself happens in the database via the
+// search_item_ids() RPC (supabase/migrations/
+// 20260909150000_add_search_trigram_indexes.sql) -- title/notes/review
+// ILIKE'd directly, tag names matched through an EXISTS join to item_tags/
+// tags (database-schema.md §5; tags is a separate table, not a column this
+// function's own select touches). That RPC returns only matching ids, kept
+// in a second query below reusing the exact same select shape as the
+// unfiltered path, rather than a parallel query function -- per the issue's
+// own constraint.
+export async function getLibraryItems(
+  categoryId: string,
+  searchTerm?: string,
+): Promise<LibraryItem[]> {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
+  const trimmedSearchTerm = searchTerm?.trim() ?? "";
+
+  let matchingIds: string[] | null = null;
+  if (trimmedSearchTerm !== "") {
+    const { data: matches, error: searchError } = await supabase.rpc("search_item_ids", {
+      p_category_id: categoryId,
+      p_search_term: trimmedSearchTerm,
+    });
+
+    if (searchError) {
+      console.error("Failed to search items:", searchError.message);
+      return [];
+    }
+
+    matchingIds = (matches ?? []).map((row) => row.id);
+    // Zero matches -- skip the second query entirely rather than pass an
+    // empty .in() list (which itself correctly returns zero rows, but
+    // there's no point round-tripping for it).
+    if (matchingIds.length === 0) return [];
+  }
+
+  let query = supabase
     .from("items")
     .select(
       `
@@ -47,6 +82,12 @@ export async function getLibraryItems(categoryId: string): Promise<LibraryItem[]
     .eq("category_id", categoryId)
     .is("deleted_at", null)
     .order("created_at", { ascending: false });
+
+  if (matchingIds) {
+    query = query.in("id", matchingIds);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     // Swallowed rather than thrown, same convention as getCategories: a

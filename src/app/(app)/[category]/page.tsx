@@ -10,7 +10,9 @@ import { createClient } from "@/lib/supabase/server";
 // that category (RLS already scopes this to auth.uid(), see
 // database-schema.md §4) plus their persisted list_view_mode preference,
 // and hands both to the client-side LibraryView for rendering + the
-// List/Card toggle.
+// List/Card toggle. `categoryId` is passed through too (issue #22) --
+// LibraryView's search box needs it for the searchLibraryItemsAction calls
+// it makes as the user types, scoping every re-query to this same category.
 export default async function CategoryPage({
   params,
 }: {
@@ -55,6 +57,7 @@ export default async function CategoryPage({
 
   return (
     <LibraryView
+      categoryId={category.id}
       categoryName={category.name}
       categorySlug={slug}
       items={items}

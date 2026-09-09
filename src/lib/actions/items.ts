@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 
+import { getLibraryItems, type LibraryItem } from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 import {
   addItemSchema,
@@ -453,4 +454,18 @@ export async function updateItemAction(
   }
 
   redirect(`/${category.slug}/${itemId}`);
+}
+
+// Server Action backing LibraryView.tsx's search box (issue #22). A thin
+// wrapper, not a parallel query -- LibraryView is a client component, and
+// getLibraryItems (lib/queries/items.ts) uses createClient()/next/headers'
+// cookies(), which only resolves in a server context. Every actual bit of
+// matching logic lives in getLibraryItems/search_item_ids() (the DB RPC);
+// this action exists solely so the client can invoke that server-only code
+// path.
+export async function searchLibraryItemsAction(
+  categoryId: string,
+  searchTerm: string,
+): Promise<LibraryItem[]> {
+  return getLibraryItems(categoryId, searchTerm);
 }
