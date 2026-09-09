@@ -183,6 +183,10 @@ export async function getItemDetail(
     .eq("id", itemId)
     .eq("category_id", categoryId)
     .is("deleted_at", null)
+    // Links display in insertion order (issue #20's acceptance criteria) --
+    // without this the embedded item_links resource had no explicit order
+    // and relied on whatever order Postgres/PostgREST happened to return.
+    .order("created_at", { referencedTable: "item_links", ascending: true })
     .maybeSingle();
 
   if (error || !data) {

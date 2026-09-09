@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 
 import { CoverUploadControl } from "@/components/items/CoverUploadControl";
 import { ItemAttachments } from "@/components/items/ItemAttachments";
-import { ItemLinks } from "@/components/items/ItemLinks";
+import { ItemLinksEditor } from "@/components/items/ItemLinksEditor";
 import { getItemDetail } from "@/lib/queries/items";
 import { getSubtypes } from "@/lib/queries/subtypes";
 import { getTags } from "@/lib/queries/tags";
@@ -111,7 +111,11 @@ export default async function ItemDetailPage({
         tagSuggestions={tagSuggestions}
       />
 
-      <ItemLinks links={item.links} />
+      {/* Always interactive, independent of ItemEditForm's Edit/Save toggle
+          (issue #20) -- same #17/ItemTagsEditor precedent. Owns its own
+          local links state (see the component's header comment for why
+          that's safe here, unlike ItemTagsEditor). */}
+      <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
 
       <ItemAttachments attachments={item.attachments} />
     </div>
