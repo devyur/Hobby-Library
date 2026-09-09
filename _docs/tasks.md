@@ -139,3 +139,11 @@ Description: Discovered during #10's QA — every migration since #3 only grants
 ## 34. Manually set/edit completed_at — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/34)
 Goal: Let a user manually set and later edit an item's completion date.
 Description: Discovered while grooming #16 — `database-schema.md` §3 designed `completed_at` as "set manually, never inferred automatically," but no V1 task ever scheduled the UI for it, and #16 deliberately left it untouched. Extend #16's edit surface to let a user set/clear `completed_at` (decide date-picker vs. text input, and whether it's only shown when status = Completed) without ever inferring it automatically from a status change.
+
+## 35. Remove/delete an item's cover image — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/35)
+Goal: Let a user clear an item's cover image entirely, back to the no-cover placeholder.
+Description: Discovered while grooming #19 — cover upload only builds upload/replace, with no "clear the cover" path. Add a remove control that deletes both the storage object and the `item_images` row (never just one), owner-only, per `_docs/database-schema.md` §7.
+
+## 36. Clean up Storage objects on permanent item delete — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/36)
+Goal: Permanently deleting an item also deletes its Storage objects, not just its DB rows.
+Description: Discovered while grooming #21 — Postgres FK cascades remove `item_images`/`item_attachments` rows on delete, but Supabase Storage objects aren't linked to FKs, so nothing deletes the underlying files in the `covers`/`attachments` buckets. Wire this into #25's Permanent Delete action; a failed Storage delete must not silently pass as success.

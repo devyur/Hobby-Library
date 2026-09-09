@@ -165,11 +165,13 @@ Added per the UI style guide decision to persist theme choice server-side (so it
 
 ## 4. Row-Level Security
 
-All user-owned tables get RLS policies scoping reads/writes to `auth.uid()` (directly via `user_id`, or via a join to `items.user_id`/`lists.user_id` for child tables). `categories` and global predefined `subtypes`/`tags` rows (`user_id IS NULL`) are readable by all authenticated users, writable only via migration/seed (not through the app) — except `tags`, which since issue #17 also has an app-facing create path (a user creating their own custom tag): its SELECT policy scopes to `user_id IS NULL OR user_id = auth.uid()` (a custom tag is never visible to another user) and its INSERT policy's `WITH CHECK (user_id = auth.uid())` means a user can only ever create a tag owned by themselves.
+All user-owned tables get RLS policies scoping reads/writes to `auth.uid()` (directly via `user_id`, or via a join to `items.user_id`/`lists.user_id` for child tables). `categories` rows and global predefined `subtypes`/`tags` rows (`user_id IS NULL`) are readable by all authenticated users, writable only via migration/seed (not through the app) — except `tags` and `subtypes`, which since issues #17 and #18 respectively also have an app-facing create path (a user creating their own custom tag or subtype): each table's SELECT policy scopes to `user_id IS NULL OR user_id = auth.uid()` (a custom row is never visible to another user) and its INSERT policy's `WITH CHECK (user_id = auth.uid())` means a user can only ever create a row owned by themselves. Before #18, `subtypes_select_authenticated` was fully open (`USING (true)`) since only predefined rows existed; it was tightened in the same migration that added the INSERT policy.
 
 `list_items`' `insert`/`update` policies additionally require the referenced `item_id` to belong to the same user (an `exists` check against `items.user_id = auth.uid()`, alongside the usual `exists` check that the parent `lists` row belongs to the user). Without this, a user could add another user's item into their own list purely by knowing its id, since owning the list row alone isn't enough to prove ownership of the item being linked into it.
 
 Similarly, `item_tags_insert_own` (originally #5, revised by #17) additionally requires the referenced `tag_id` to be visible to the caller (`tags.user_id IS NULL OR tags.user_id = auth.uid()`), alongside its original `exists` check that the parent item belongs to the user. Without this, a user could attach another user's private custom tag to their own item purely by knowing its id, since owning the item alone isn't enough to prove the tag being attached is actually visible to them.
+
+For the same reason, issue #18 extended the `items_check_subtype_category` trigger (§3 `items`) with an ownership check alongside its original category-match check: a `subtype_id` must now also be visible to the row's `user_id` (`subtypes.user_id IS NULL OR subtypes.user_id = auth.uid()`), not just belong to the right category. Without this, a crafted `insert`/`update` could set an item's `subtype_id` to another user's private custom subtype purely by knowing its id.
 
 ---
 
@@ -179,7 +181,7 @@ Per plan §11, V1 needs partial-word matching, not a query language. Approach: `
 
 **Tags** (issue #22): plan §11 lists tags as a searched field, but `tags` is a separate table reached through the `item_tags` junction, not a column on `items` — it can't share the three indexes above. A tag-name match instead needs an `EXISTS` join, e.g. `EXISTS (SELECT 1 FROM item_tags JOIN tags ON tags.id = item_tags.tag_id WHERE item_tags.item_id = items.id AND tags.name ILIKE '%term%')`, OR'd alongside the title/notes/review `ILIKE`s. `tags.name` gets its own `pg_trgm` trigram GIN index for the same reason as the three `items` columns — without it, that `EXISTS` subquery falls back to a sequential scan over `tags` as the table grows with custom tags.
 
-None of this — the `pg_trgm` extension, or any of the four trigram GIN indexes — exists in a migration yet; nothing filed before #22 has needed it. #22's migration creates the extension and all four indexes together.
+The `pg_trgm` extension and all four trigram GIN indexes were added together in #22's migration — nothing filed before #22 had needed them.
 
 Combined filters (category + subtype + status + rating + tags) are a separate concern from this free-text search box — exact-match filtering, not partial-word text search — and are plain `WHERE`/`JOIN` queries needing no extra schema; see issue #23. Full-text search (`tsvector`) is a possible future upgrade, not needed for V1.
 
@@ -193,8 +195,9 @@ No dedicated tables. All stats (totals, per-status counts, average rating, compl
 
 ## 7. Storage buckets (Supabase Storage)
 
-- `covers` — item cover/gallery images, path-scoped per user (`{user_id}/{item_id}/...`), access controlled via storage policies mirroring the RLS model.
-- `attachments` — uploaded reference files, same path-scoping approach.
+- `covers` — item cover images, path-scoped per user. Since #19, a single cover lives at the fixed extension-less path `{user_id}/{item_id}/cover`, uploaded with `upsert: true` so replacing a cover overwrites in place (no orphaned object, no race against the partial unique index on `item_images`). Private bucket with per-user `insert`/`update`/`select`/`delete` storage policies (added ahead of need, during #12); `file_size_limit` (5MB) and `allowed_mime_types` (`image/jpeg`, `image/png`, `image/webp`) were added to the bucket itself in a later #19 migration as storage-layer defense-in-depth alongside the app-level check.
+- `attachments` — uploaded reference files, same per-user path-scoping, but per-file (not fixed-path) since an item can have many: `{user_id}/{item_id}/{attachment_id}`. Created by #21 with its bucket-level `file_size_limit` (2MB) and `allowed_mime_types` (`text/plain`, `text/markdown`, `application/pdf`) set at creation time, alongside app-level checks and a 10-attachments-per-item cap enforced in the Server Action.
+- Storage objects in either bucket are not linked to Postgres FKs, so permanently deleting an item does not currently clean them up — tracked as [#36](https://github.com/devyur/Hobby-Library/issues/36).
 
 ---
 
