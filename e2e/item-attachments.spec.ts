@@ -227,7 +227,7 @@ test.describe("File attachments on an item (issue #21)", () => {
     const admin = createSupabaseAdminClient();
     const email = randomTestEmail("attach-cap");
     let userId: string | null = null;
-    let seededPaths: string[] = [];
+    const seededPaths: string[] = [];
 
     try {
       userId = await createTestUser(admin, email);
