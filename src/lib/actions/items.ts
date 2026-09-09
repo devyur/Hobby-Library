@@ -6,6 +6,7 @@ import {
   getLibraryItems,
   type LibraryItem,
   type LibraryItemFilters,
+  type LibrarySort,
 } from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -470,8 +471,9 @@ export async function updateItemAction(
 export async function searchLibraryItemsAction(
   categoryId: string,
   searchTerm: string,
+  sort?: LibrarySort,
 ): Promise<LibraryItem[]> {
-  return getLibraryItems(categoryId, searchTerm);
+  return getLibraryItems(categoryId, searchTerm, undefined, sort);
 }
 
 // Server Action backing LibraryView.tsx's filter controls (issue #23) --
@@ -482,11 +484,15 @@ export async function searchLibraryItemsAction(
 // action -- one combined query per the issue's own "read from the same
 // combined query, not two independent, later-merged lists" requirement --
 // rather than reconciling this action's results with a separate
-// searchLibraryItemsAction call.
+// searchLibraryItemsAction call. `sort` (issue #24) rides along the same
+// combined action -- LibraryView's one debounced effect reads search term,
+// filters, AND sort together, so sort composes on top of the filtered/
+// searched result set rather than requiring a second round trip.
 export async function filterLibraryItemsAction(
   categoryId: string,
   searchTerm: string,
   filters: LibraryItemFilters,
+  sort?: LibrarySort,
 ): Promise<LibraryItem[]> {
-  return getLibraryItems(categoryId, searchTerm, filters);
+  return getLibraryItems(categoryId, searchTerm, filters, sort);
 }

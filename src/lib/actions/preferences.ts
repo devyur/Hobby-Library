@@ -92,3 +92,35 @@ export async function updateListViewMode(
 
   return { error: error?.message ?? null };
 }
+
+// Server Action backing the Sort control in
+// src/components/items/LibraryView.tsx (issue #24). Same session-guarded
+// upsert shape as updateThemePreference/updateLastScreen/updateListViewMode
+// above -- optimistic local update in the client, fire-and-forget
+// persistence here. `sort` matches the check constraint on
+// user_preferences.default_sort added by migration
+// 20260909160000_add_default_sort_check_constraint.sql.
+export async function updateDefaultSort(
+  sort: "recently_added" | "priority" | "status",
+): Promise<{ error: string | null }> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { error: "Not authenticated" };
+  }
+
+  const { error } = await supabase.from("user_preferences").upsert(
+    {
+      user_id: user.id,
+      default_sort: sort,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" },
+  );
+
+  return { error: error?.message ?? null };
+}

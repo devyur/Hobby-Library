@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { LibrarySort } from "./items";
+
 // Unit coverage for getLibraryItems' search-term parameter (issue #22).
 // Mocks the Supabase client the same way lib/actions/items.test.ts does --
 // this isolates the two-query shape (search_item_ids() RPC, then the
@@ -253,5 +255,86 @@ describe("getLibraryItems filters", () => {
 
     expect(result).toEqual([]);
     expect(supabase.from).not.toHaveBeenCalledWith("items");
+  });
+});
+
+// Unit coverage for getLibraryItems' `sort` parameter (issue #24) --
+// asserts the exact `.order(...)` calls (column + ascending flag, and
+// ordering of calls -- Priority/Status's own rank first, created_at desc as
+// the tie-breaker second) issued against the `items` query, since that's
+// the one thing this mocked-Supabase-client setup can actually observe:
+// whether the rank is genuinely computed Postgres-side (the live
+// `item_priority_rank`/`item_status_rank` computed fields, migration
+// 20260909160000) is covered separately by e2e/sort.spec.ts against the
+// real project.
+describe("getLibraryItems sort", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("with no sort passed, orders by created_at desc alone -- unchanged from before this issue", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1");
+
+    expect(supabase.itemsQuery.order).toHaveBeenCalledTimes(1);
+    expect(supabase.itemsQuery.order).toHaveBeenCalledWith("created_at", { ascending: false });
+  });
+
+  it("sort='recently_added' behaves identically to omitting sort -- created_at desc alone", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "recently_added" satisfies LibrarySort);
+
+    expect(supabase.itemsQuery.order).toHaveBeenCalledTimes(1);
+    expect(supabase.itemsQuery.order).toHaveBeenCalledWith("created_at", { ascending: false });
+  });
+
+  it("sort='priority' orders by the item_priority_rank computed field ascending, then created_at desc as the tie-breaker", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "priority" satisfies LibrarySort);
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_priority_rank", {
+      ascending: true,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenCalledTimes(2);
+  });
+
+  it("sort='status' orders by the item_status_rank computed field ascending, then created_at desc as the tie-breaker", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "status" satisfies LibrarySort);
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_status_rank", {
+      ascending: true,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenCalledTimes(2);
+  });
+
+  it("sort composes with an active search term/filters (same matchingIds narrowing applied regardless of sort)", async () => {
+    const supabase = fakeSupabase({
+      rpcResult: { data: [{ id: "item-1" }], error: null },
+      itemsResult: { data: [], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", "witch", { status: "planned" }, "status");
+
+    expect(supabase.itemsQuery.in).toHaveBeenCalledWith("id", ["item-1"]);
+    expect(supabase.itemsQuery.eq).toHaveBeenCalledWith("status", "planned");
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_status_rank", {
+      ascending: true,
+    });
   });
 });

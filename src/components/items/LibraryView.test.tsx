@@ -3,8 +3,10 @@ import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const updateListViewModeMock = vi.fn();
+const updateDefaultSortMock = vi.fn();
 vi.mock("@/lib/actions/preferences", () => ({
   updateListViewMode: (...args: unknown[]) => updateListViewModeMock(...args),
+  updateDefaultSort: (...args: unknown[]) => updateDefaultSortMock(...args),
 }));
 
 const filterLibraryItemsActionMock = vi.fn();
@@ -61,6 +63,7 @@ function renderLibraryView(overrides: Partial<ComponentProps<typeof LibraryView>
       categorySlug="games"
       items={items}
       initialViewMode="list"
+      initialSort="recently_added"
       subtypes={subtypes}
       tags={tags}
       {...overrides}
@@ -72,6 +75,7 @@ describe("LibraryView", () => {
   afterEach(() => {
     cleanup();
     updateListViewModeMock.mockReset();
+    updateDefaultSortMock.mockReset();
     filterLibraryItemsActionMock.mockReset();
     vi.useRealTimers();
   });
@@ -195,12 +199,17 @@ describe("LibraryView", () => {
       await vi.advanceTimersByTimeAsync(300);
     });
 
-    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(CATEGORY_ID, "hades", {
-      subtypeId: undefined,
-      status: undefined,
-      tagIds: undefined,
-      minRating: undefined,
-    });
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "hades",
+      {
+        subtypeId: undefined,
+        status: undefined,
+        tagIds: undefined,
+        minRating: undefined,
+      },
+      "recently_added",
+    );
     expect(screen.queryByRole("link", { name: /The Witcher 3/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
   });
@@ -257,12 +266,17 @@ describe("LibraryView", () => {
       await vi.advanceTimersByTimeAsync(300);
     });
 
-    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(CATEGORY_ID, "", {
-      subtypeId: undefined,
-      status: "completed",
-      tagIds: undefined,
-      minRating: undefined,
-    });
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "",
+      {
+        subtypeId: undefined,
+        status: "completed",
+        tagIds: undefined,
+        minRating: undefined,
+      },
+      "recently_added",
+    );
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /The Witcher 3/ })).not.toBeInTheDocument();
   });
@@ -288,6 +302,7 @@ describe("LibraryView", () => {
       CATEGORY_ID,
       "",
       expect.objectContaining({ tagIds: expect.arrayContaining(["tag-coop", "tag-story"]) }),
+      "recently_added",
     );
     const lastCallTagIds = filterLibraryItemsActionMock.mock.calls.at(-1)![2].tagIds;
     expect(lastCallTagIds).toHaveLength(2);
@@ -313,12 +328,17 @@ describe("LibraryView", () => {
     // One combined call carrying both the search term and the rating
     // threshold -- not a search call followed by a separate filter call.
     expect(filterLibraryItemsActionMock).toHaveBeenCalledTimes(1);
-    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(CATEGORY_ID, "hades", {
-      subtypeId: undefined,
-      status: undefined,
-      tagIds: undefined,
-      minRating: 8,
-    });
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "hades",
+      {
+        subtypeId: undefined,
+        status: undefined,
+        tagIds: undefined,
+        minRating: 8,
+      },
+      "recently_added",
+    );
   });
 
   it('shows "No items match the selected filters." (not the search or empty-library message) when a filter-only combination matches zero items', async () => {
@@ -359,6 +379,142 @@ describe("LibraryView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
 
     expect(screen.getByRole("combobox", { name: "Status" })).toHaveValue("");
+    expect(screen.getByRole("link", { name: /The Witcher 3/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
+    expect(filterLibraryItemsActionMock).not.toHaveBeenCalled();
+  });
+
+  // Sort control (issue #24).
+  it("always shows the Sort control with exactly three options, defaulting to initialSort", () => {
+    renderLibraryView({ items: [], initialSort: "priority" });
+
+    const sortSelect = screen.getByRole("combobox", { name: "Sort" }) as HTMLSelectElement;
+    const optionLabels = Array.from(sortSelect.options).map((option) => option.textContent);
+
+    expect(optionLabels).toEqual(["Recently Added", "Priority", "Status"]);
+    expect(sortSelect).toHaveValue("priority");
+  });
+
+  it("selecting Priority calls filterLibraryItemsAction with the chosen sort, swaps in results, and persists via updateDefaultSort", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue([items[1], items[0]]);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "priority" },
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "",
+      {
+        subtypeId: undefined,
+        status: undefined,
+        tagIds: undefined,
+        minRating: undefined,
+      },
+      "priority",
+    );
+    expect(updateDefaultSortMock).toHaveBeenCalledWith("priority");
+    expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("priority");
+  });
+
+  it("does not throw when the sort persistence write rejects (fire-and-forget)", async () => {
+    updateDefaultSortMock.mockRejectedValue(new Error("network hiccup"));
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    expect(() =>
+      fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+        target: { value: "status" },
+      }),
+    ).not.toThrow();
+
+    await waitFor(() => expect(updateDefaultSortMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("changing sort combines with an active filter in one call, rather than dropping the filter", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue([items[1]]);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), {
+      target: { value: "completed" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    filterLibraryItemsActionMock.mockClear();
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "status" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledTimes(1);
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "",
+      {
+        subtypeId: undefined,
+        status: "completed",
+        tagIds: undefined,
+        minRating: undefined,
+      },
+      "status",
+    );
+  });
+
+  it("Clear filters does not reset the current sort selection", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "status" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("status");
+  });
+
+  it("selecting sort back to its initial value (with no other active query) restores the server-provided items with no further round trip", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue([items[1]]);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "priority" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.queryByRole("link", { name: /The Witcher 3/ })).not.toBeInTheDocument();
+
+    filterLibraryItemsActionMock.mockClear();
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "recently_added" },
+    });
+
     expect(screen.getByRole("link", { name: /The Witcher 3/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
     expect(filterLibraryItemsActionMock).not.toHaveBeenCalled();

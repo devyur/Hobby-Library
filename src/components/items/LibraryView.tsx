@@ -8,8 +8,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { filterLibraryItemsAction } from "@/lib/actions/items";
-import { updateListViewMode } from "@/lib/actions/preferences";
-import type { ItemStatus, LibraryItem } from "@/lib/queries/items";
+import { updateDefaultSort, updateListViewMode } from "@/lib/actions/preferences";
+import type { ItemStatus, LibraryItem, LibrarySort } from "@/lib/queries/items";
 import type { SubtypeOption } from "@/lib/queries/subtypes";
 import type { TagOption } from "@/lib/queries/tags";
 
@@ -33,6 +33,12 @@ const STATUS_OPTIONS: { value: ItemStatus; label: string }[] = [
 ];
 
 const RATING_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1);
+
+const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
+  { value: "recently_added", label: "Recently Added" },
+  { value: "priority", label: "Priority" },
+  { value: "status", label: "Status" },
+];
 
 // Category library view (issue #12): the List/Card toggle is always
 // visible above the content area (including on zero items), defaults to
@@ -66,12 +72,27 @@ const RATING_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1);
 // The actual AND-across-dimensions / OR-within-tags combine logic all
 // happens in the database -- see lib/queries/items.ts's getLibraryItems and
 // database-schema.md §5.
+//
+// Sort control (issue #24): `sort` joins that same effect/action rather than
+// getting its own -- it's orthogonal to search/filters (an ORDER BY applied
+// on top of whatever WHERE they produce), but still has to ride the same
+// server round trip, since LibraryItem has no created_at for a client-side
+// re-sort. `items` (the server-fetched prop) is already sorted per
+// `initialSort` (page.tsx passes it to getLibraryItems too), so
+// `displayedItems` can keep rendering `items` directly -- no extra query --
+// for as long as `sort` stays at its initial value and no search/filter is
+// active; changing `sort` away from `initialSort` folds into `hasActiveQuery`
+// below so it triggers the same debounced round trip filters/search already
+// use. Selecting an option is applied optimistically to local `sort` state
+// immediately, then persisted fire-and-forget via updateDefaultSort -- same
+// pattern as the List/Card toggle's updateListViewMode.
 export function LibraryView({
   categoryId,
   categoryName,
   categorySlug,
   items,
   initialViewMode,
+  initialSort,
   subtypes,
   tags,
 }: {
@@ -80,11 +101,13 @@ export function LibraryView({
   categorySlug: string;
   items: LibraryItem[];
   initialViewMode: ViewMode;
+  initialSort: LibrarySort;
   subtypes: SubtypeOption[];
   tags: TagOption[];
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [searchTerm, setSearchTerm] = useState("");
+  const [sort, setSort] = useState<LibrarySort>(initialSort);
 
   // Filter controls (issue #23) -- "" means the dimension's default ("All
   // subtypes"/"All statuses"/"Any rating"); an empty selectedTagIds array
@@ -107,7 +130,12 @@ export function LibraryView({
   const trimmedSearchTerm = searchTerm.trim();
   const hasActiveFilters =
     subtypeId !== "" || status !== "" || selectedTagIds.length > 0 || ratingMin !== "";
-  const hasActiveQuery = trimmedSearchTerm !== "" || hasActiveFilters;
+  // `items` only matches the currently-selected sort while `sort` is still
+  // at its initial (server-fetched) value -- once the user picks a
+  // different one, rendering `items` as-is would show the wrong order, so
+  // that also has to route through the same round trip as an active
+  // search/filter.
+  const hasActiveQuery = trimmedSearchTerm !== "" || hasActiveFilters || sort !== initialSort;
   const displayedItems = hasActiveQuery ? (queryResults ?? items) : items;
 
   // Stable string key for the effect's dependency array -- selectedTagIds'
@@ -122,12 +150,17 @@ export function LibraryView({
 
     const thisRequestId = ++queryRequestId.current;
     const timeoutId = setTimeout(() => {
-      filterLibraryItemsAction(categoryId, trimmedSearchTerm, {
-        subtypeId: subtypeId || undefined,
-        status: status || undefined,
-        tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
-        minRating: ratingMin === "" ? undefined : ratingMin,
-      })
+      filterLibraryItemsAction(
+        categoryId,
+        trimmedSearchTerm,
+        {
+          subtypeId: subtypeId || undefined,
+          status: status || undefined,
+          tagIds: selectedTagIds.length > 0 ? selectedTagIds : undefined,
+          minRating: ratingMin === "" ? undefined : ratingMin,
+        },
+        sort,
+      )
         .then((results) => {
           if (queryRequestId.current === thisRequestId) {
             setQueryResults(results);
@@ -148,7 +181,16 @@ export function LibraryView({
     // render regardless (categoryId/trimmedSearchTerm/etc. are all
     // primitives), so the closure always sees the current array.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryId, trimmedSearchTerm, subtypeId, status, tagIdsKey, ratingMin, hasActiveQuery]);
+  }, [
+    categoryId,
+    trimmedSearchTerm,
+    subtypeId,
+    status,
+    tagIdsKey,
+    ratingMin,
+    sort,
+    hasActiveQuery,
+  ]);
 
   function handleSelect(mode: ViewMode) {
     if (mode === viewMode) return;
@@ -156,6 +198,15 @@ export function LibraryView({
     setViewMode(mode);
     updateListViewMode(mode).catch(() => {
       // Intentionally swallowed -- see the comment above.
+    });
+  }
+
+  function handleSortChange(nextSort: LibrarySort) {
+    if (nextSort === sort) return;
+
+    setSort(nextSort);
+    updateDefaultSort(nextSort).catch(() => {
+      // Intentionally swallowed -- see handleSelect's comment above.
     });
   }
 
@@ -172,7 +223,13 @@ export function LibraryView({
     setRatingMin("");
   }
 
-  const emptyMessage = !hasActiveQuery
+  // Deliberately keyed off search/filters alone, not hasActiveQuery -- a
+  // sort-only round trip (no search term, no filter active) against a truly
+  // empty category must still read "No items in {category} yet.", not "No
+  // items match the selected filters." (sort has no filtering effect of its
+  // own to describe).
+  const hasActiveSearchOrFilters = trimmedSearchTerm !== "" || hasActiveFilters;
+  const emptyMessage = !hasActiveSearchOrFilters
     ? `No items in ${categoryName} yet.`
     : trimmedSearchTerm !== ""
       ? `No items match "${trimmedSearchTerm}".`
@@ -322,6 +379,24 @@ export function LibraryView({
         <Button type="button" size="sm" variant="outline" onClick={handleClearFilters}>
           Clear filters
         </Button>
+
+        {/* Sort control (issue #24) -- independent of the four filter
+            controls above (not reset by Clear filters, doesn't reset them):
+            an ORDER BY composed on top of whatever WHERE search/filters
+            already produced, per this issue's own constraint. Always
+            visible, same convention as the rest of this row. */}
+        <Select
+          aria-label="Sort"
+          value={sort}
+          onChange={(event) => handleSortChange(event.target.value as LibrarySort)}
+          className="ml-auto w-auto min-w-40"
+        >
+          {SORT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </Select>
       </div>
 
       {displayedItems.length === 0 ? (

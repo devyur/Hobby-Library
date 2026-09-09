@@ -153,13 +153,15 @@ Primary key `(list_id, item_id)`.
 | user_id | uuid, pk, FK auth.users | one row per user |
 | theme | text, nullable | `'light'` / `'dark'` / `null` (null = follow system preference) |
 | last_screen | text, nullable | path/route of the last screen visited, for plan §15's "remember last screen" |
-| default_sort | text, nullable | last-chosen sort option, for plan §13 |
+| default_sort | text, nullable | `'recently_added'` / `'priority'` / `'status'` / `null` (null = `'recently_added'`), last-chosen sort option, for plan §13 |
 | list_view_mode | text, nullable | `'list'` / `'card'`, last-chosen library display mode |
 | updated_at | timestamptz | |
 
 Added per the UI style guide decision to persist theme choice server-side (so it syncs across devices) rather than in `localStorage` — and since that requires a per-user preferences row anyway, the already-decided "remember last screen" and "remember sort" requirements are folded into the same table rather than each inventing its own storage.
 
-`theme` and `list_view_mode` each carry a check constraint restricting them to the enumerated values above (or `null`) — `theme in ('light', 'dark')`, `list_view_mode in ('list', 'card')`. `default_sort` is left unconstrained: its value set isn't enumerated anywhere yet (`#24` defines it), so a check constraint would just be guessing. Added in the `user_preferences` migration, see [#8](https://github.com/devyur/Hobby-Library/issues/8).
+`theme`, `list_view_mode`, and `default_sort` each carry a check constraint restricting them to the enumerated values above (or `null`) — `theme in ('light', 'dark')`, `list_view_mode in ('list', 'card')`, `default_sort in ('recently_added', 'priority', 'status')`. `theme`/`list_view_mode`'s constraints were added in the `user_preferences` migration, see [#8](https://github.com/devyur/Hobby-Library/issues/8); `default_sort`'s was added later, once [#24](https://github.com/devyur/Hobby-Library/issues/24) defined its value set, via `supabase/migrations/20260909160000_add_default_sort_check_constraint.sql`.
+
+`recently_added` orders by `created_at` descending (newest first, the default when `default_sort` is `null`). `priority` orders `High → Medium → Low → (no priority set)`, and `status` orders `Ongoing → Planned → Completed → Dropped`; both break ties within a bucket by `created_at` descending. See plan.md §13 for the full rationale — the ordering itself is expressed in Postgres via two PostgREST computed-field functions the same migration adds, `item_priority_rank`/`item_status_rank`, rather than fetched unsorted and reordered in application code.
 
 ---
 

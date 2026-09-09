@@ -272,7 +272,14 @@ The user can switch to:
 - Priority
 - Status
 
-The application should remember the user's chosen sorting preference where practical.
+Ordering chosen for the two alternatives (decided in [#24](https://github.com/devyur/Hobby-Library/issues/24)):
+
+- **Priority** — High → Medium → Low → (no priority set); items with no priority sort last, not first or interleaved.
+- **Status** — Ongoing → Planned → Completed → Dropped.
+
+Both break ties within a bucket by created_at descending (most recently added first) — the same rule Recently Added uses on its own. No ascending/descending direction toggle in V1 (each of the three is fixed to the one direction above) — moved to [#39](https://github.com/devyur/Hobby-Library/issues/39). Additional sort dimensions beyond these three (e.g. Rating, alphabetical Title) are moved to [#40](https://github.com/devyur/Hobby-Library/issues/40).
+
+The application should remember the user's chosen sorting preference where practical — implemented via `user_preferences.default_sort` (database-schema.md §3), synced across devices the same way `theme`/`list_view_mode` already are.
 
 ---
 

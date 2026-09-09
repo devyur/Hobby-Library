@@ -3,8 +3,8 @@ import type { Database } from "@/lib/supabase/types";
 
 // Reusable read query (issue #12), added alongside categories.ts rather than
 // overloading it per the issue's own file constraints. Fetches every
-// non-deleted item the signed-in user owns in one category, ordered
-// created_at desc (fixed order -- user-controlled sorting is #24). RLS on
+// non-deleted item the signed-in user owns in one category, ordered per the
+// `sort` param (issue #24; created_at desc, unchanged, when omitted). RLS on
 // `items` already scopes reads to `auth.uid()` (database-schema.md §4), so
 // no explicit user_id filter is needed here.
 
@@ -40,6 +40,17 @@ export interface LibraryItemFilters {
   minRating?: number;
 }
 
+// Sort dimensions added by issue #24 -- orthogonal to (and composable with)
+// searchTerm/filters above: whichever `sort` is passed is applied as the
+// ORDER BY on top of whatever result set search/filters already narrowed
+// down to. `'recently_added'` (also the fallback when omitted/undefined,
+// matching a null `user_preferences.default_sort`) is unchanged from the
+// fixed created_at-desc order this function always used before this issue.
+// Matches the plain lowercase-with-underscore values
+// `user_preferences.default_sort` itself is constrained to (migration
+// 20260909160000), not the Title Case UI labels.
+export type LibrarySort = "recently_added" | "priority" | "status";
+
 // searchTerm is optional (issue #22): omitted/blank returns the same
 // unfiltered, created_at-desc list as before #22 ever existed. When
 // non-blank, matching itself happens in the database via the
@@ -65,10 +76,19 @@ export interface LibraryItemFilters {
 // lists are intersected before being applied, so the final result still
 // satisfies (search term) AND (any selected tag), never just one or the
 // other.
+//
+// sort is optional too (issue #24), applied as the final ORDER BY on
+// whatever result set the searchTerm/filters logic above already narrowed
+// to -- see the `.order(...)` calls near the bottom of this function.
+// Priority/Status are expressed as a Postgres-side rank via the
+// `item_priority_rank`/`item_status_rank` PostgREST computed-field functions
+// (migration 20260909160000), not fetched unsorted and reordered in JS, per
+// this issue's own constraint.
 export async function getLibraryItems(
   categoryId: string,
   searchTerm?: string,
   filters?: LibraryItemFilters,
+  sort?: LibrarySort,
 ): Promise<LibraryItem[]> {
   const supabase = await createClient();
 
@@ -142,8 +162,24 @@ export async function getLibraryItems(
     `,
     )
     .eq("category_id", categoryId)
-    .is("deleted_at", null)
-    .order("created_at", { ascending: false });
+    .is("deleted_at", null);
+
+  // Priority/Status each order by their computed-field rank first, then
+  // created_at desc as the tie-breaker within a bucket (both per this
+  // issue's acceptance criteria); Recently Added (the default, including
+  // when `sort` is omitted/undefined -- a null user_preferences.default_sort)
+  // is unchanged: created_at desc alone.
+  if (sort === "priority") {
+    query = query
+      .order("item_priority_rank", { ascending: true })
+      .order("created_at", { ascending: false });
+  } else if (sort === "status") {
+    query = query
+      .order("item_status_rank", { ascending: true })
+      .order("created_at", { ascending: false });
+  } else {
+    query = query.order("created_at", { ascending: false });
+  }
 
   if (matchingIds) {
     query = query.in("id", matchingIds);
