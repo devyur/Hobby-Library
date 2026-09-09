@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { CoverUploadControl } from "@/components/items/CoverUploadControl";
-import { ItemAttachments } from "@/components/items/ItemAttachments";
+import { ItemAttachmentsEditor } from "@/components/items/ItemAttachmentsEditor";
 import { ItemLinksEditor } from "@/components/items/ItemLinksEditor";
 import { getItemDetail } from "@/lib/queries/items";
 import { getSubtypes } from "@/lib/queries/subtypes";
@@ -117,7 +117,12 @@ export default async function ItemDetailPage({
           that's safe here, unlike ItemTagsEditor). */}
       <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
 
-      <ItemAttachments attachments={item.attachments} />
+      {/* Always interactive, independent of ItemEditForm's Edit/Save toggle
+          (issue #21) -- same ItemLinksEditor precedent. Owns its own local
+          attachments state, seeded from the server-rendered
+          item.attachments, for the same "never unmounted by page.tsx"
+          reason ItemLinksEditor documents. */}
+      <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
     </div>
   );
 }

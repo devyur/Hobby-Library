@@ -120,6 +120,13 @@ export interface ItemAttachment {
   filename: string;
   mimeType: string;
   sizeBytes: number;
+  // Resolved eagerly below, same pattern as coverUrl -- a signed URL with
+  // `{ download: filename }` baked in (issue #21's Constraints), so a plain
+  // <a href> download saves under the real filename rather than the
+  // opaque {attachment_id} storage path segment. Null only if signing
+  // itself failed (transient Storage error), never as a sentinel for "no
+  // attachment" -- every item_attachments row gets one.
+  downloadUrl: string | null;
 }
 
 export interface ItemDetail {
@@ -177,7 +184,7 @@ export async function getItemDetail(
       item_tags ( tags ( id, name ) ),
       item_images ( storage_path, is_cover ),
       item_links ( id, url, label ),
-      item_attachments ( id, filename, mime_type, size_bytes )
+      item_attachments ( id, filename, mime_type, size_bytes, storage_path )
     `,
     )
     .eq("id", itemId)
@@ -220,7 +227,29 @@ export async function getItemDetail(
     .filter((tag): tag is ItemTag => tag !== null);
 
   const links = Array.isArray(data.item_links) ? data.item_links : [];
-  const attachments = Array.isArray(data.item_attachments) ? data.item_attachments : [];
+  const attachmentRows = Array.isArray(data.item_attachments) ? data.item_attachments : [];
+
+  // Signed download URLs resolved eagerly, one per attachment, same
+  // per-request (never cached) reasoning as coverUrl above -- the
+  // `attachments` bucket is private/path-scoped too. `{ download: filename }`
+  // is what makes the browser save under the real filename instead of the
+  // opaque {attachment_id} path segment (issue #21's Constraints).
+  const attachments = await Promise.all(
+    attachmentRows.map(async (attachment) => {
+      const { data: signed } = await supabase.storage
+        .from("attachments")
+        .createSignedUrl(attachment.storage_path, COVER_SIGNED_URL_TTL_SECONDS, {
+          download: attachment.filename,
+        });
+      return {
+        id: attachment.id,
+        filename: attachment.filename,
+        mimeType: attachment.mime_type,
+        sizeBytes: attachment.size_bytes,
+        downloadUrl: signed?.signedUrl ?? null,
+      };
+    }),
+  );
 
   return {
     id: data.id,
@@ -238,11 +267,6 @@ export async function getItemDetail(
     tags,
     coverUrl,
     links: links.map((link) => ({ id: link.id, url: link.url, label: link.label })),
-    attachments: attachments.map((attachment) => ({
-      id: attachment.id,
-      filename: attachment.filename,
-      mimeType: attachment.mime_type,
-      sizeBytes: attachment.size_bytes,
-    })),
+    attachments,
   };
 }
