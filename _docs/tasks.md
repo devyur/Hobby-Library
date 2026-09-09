@@ -147,3 +147,7 @@ Description: Discovered while grooming #19 — cover upload only builds upload/r
 ## 36. Clean up Storage objects on permanent item delete — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/36)
 Goal: Permanently deleting an item also deletes its Storage objects, not just its DB rows.
 Description: Discovered while grooming #21 — Postgres FK cascades remove `item_images`/`item_attachments` rows on delete, but Supabase Storage objects aren't linked to FKs, so nothing deletes the underlying files in the `covers`/`attachments` buckets. Wire this into #25's Permanent Delete action; a failed Storage delete must not silently pass as success.
+
+## 37. Client-side resize/compress cover images before upload — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/37)
+Goal: Shrink cover images before upload so covers use far less of the free tier's ~1GB Storage / ~5GB-month bandwidth budget.
+Description: Discussed with the user while reasoning about free-tier headroom for potentially hundreds of covers per user. Resize client-side (browser Canvas, no new dependency) to a size appropriate for how covers actually render, re-encode at a reasonable quality, and keep #19's existing type/size validation as a safety net rather than a replacement.
