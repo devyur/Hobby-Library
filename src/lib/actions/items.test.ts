@@ -25,8 +25,10 @@ vi.mock("next/navigation", () => ({
   redirect: (...args: [string]) => redirectMock(...args),
 }));
 
-const { quickAddItemAction, updateItemAction } = await import("./items");
-const { initialItemFormState } = await import("@/lib/validation/items");
+const { quickAddItemAction, updateItemAction, deleteItemAction } = await import("./items");
+const { initialItemFormState, initialDeleteItemActionState } = await import(
+  "@/lib/validation/items"
+);
 
 type FakeRow = Record<string, unknown> | null;
 
@@ -363,5 +365,139 @@ describe("updateItemAction", () => {
 
     expect(result.fieldErrors.status).toBeDefined();
     expect(createClientMock).not.toHaveBeenCalled();
+  });
+});
+
+// Unit coverage for deleteItemAction (issue #25's soft delete), focused on
+// what e2e coverage (e2e/item-delete.spec.ts) can exercise live but not
+// directly inspect: (1) the ownership/not-found check never distinguishing
+// another user's item (or an already-deleted one) from a nonexistent one --
+// same .eq("user_id", ...).is("deleted_at", null) shape updateItemAction
+// itself uses, and (2) that the update payload touches only deleted_at,
+// never any other column.
+describe("deleteItemAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    redirectMock.mockClear();
+  });
+
+  function fakeSupabaseForDelete(options: {
+    user?: { id: string } | null;
+    item?: FakeRow;
+    category?: FakeRow;
+    updateError?: { message: string } | null;
+  }) {
+    const updateMock = vi.fn((payload: Record<string, unknown>) => {
+      void payload;
+      return { eq: async () => ({ error: options.updateError ?? null }) };
+    });
+
+    const fromMock = vi.fn((table: string) => {
+      if (table === "items") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({
+                is: () => ({
+                  maybeSingle: async () => ({ data: options.item ?? null }),
+                }),
+              }),
+            }),
+          }),
+          update: updateMock,
+        };
+      }
+      if (table === "categories") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: options.category ?? null }) }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table in test: ${table}`);
+    });
+
+    return {
+      from: fromMock,
+      updateMock,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    };
+  }
+
+  it("rejects an unauthenticated request without touching the database", async () => {
+    const supabase = fakeSupabaseForDelete({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await deleteItemAction("item-1", initialDeleteItemActionState, new FormData());
+
+    expect(result.error).toMatch(/signed in/i);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one -- a plain not-found error, update never called", async () => {
+    const supabase = fakeSupabaseForDelete({
+      user: { id: "user-1" },
+      item: null, // .eq("user_id", user.id) excludes another user's row
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await deleteItemAction(
+      "someone-elses-item",
+      initialDeleteItemActionState,
+      new FormData(),
+    );
+
+    expect(result.error).toMatch(/could not be found/i);
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("treats an already soft-deleted item the same as a nonexistent one (the .is('deleted_at', null) filter excludes it)", async () => {
+    const supabase = fakeSupabaseForDelete({
+      user: { id: "user-1" },
+      item: null, // already-deleted rows are excluded by the query's own .is("deleted_at", null)
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await deleteItemAction(
+      "already-deleted-item",
+      initialDeleteItemActionState,
+      new FormData(),
+    );
+
+    expect(result.error).toMatch(/could not be found/i);
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("sets only deleted_at and redirects to the item's own category library page", async () => {
+    const supabase = fakeSupabaseForDelete({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(
+      deleteItemAction("item-1", initialDeleteItemActionState, new FormData()),
+    ).rejects.toThrow("REDIRECT:/games");
+
+    expect(supabase.updateMock).toHaveBeenCalledTimes(1);
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(Object.keys(payload)).toEqual(["deleted_at"]);
+    expect(typeof payload.deleted_at).toBe("string");
+  });
+
+  it("a failed update returns a clean error and never redirects", async () => {
+    const supabase = fakeSupabaseForDelete({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      updateError: { message: "boom" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await deleteItemAction("item-1", initialDeleteItemActionState, new FormData());
+
+    expect(result.error).toMatch(/failed to delete/i);
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 });

@@ -13,6 +13,7 @@ import {
   addItemSchema,
   editItemSchema,
   quickAddItemSchema,
+  type DeleteItemActionState,
   type ItemFormState,
 } from "@/lib/validation/items";
 
@@ -459,6 +460,84 @@ export async function updateItemAction(
   }
 
   redirect(`/${category.slug}/${itemId}`);
+}
+
+// Server Action backing ItemEditForm.tsx's Delete control (issue #25) --
+// bound to a specific item id via `.bind(null, itemId)`, same shape
+// updateItemAction uses, and wired through useActionState/`<form
+// action={...}>` so its redirect-on-success behaves exactly like
+// updateItemAction's own post-save redirect. Only ever reachable from the
+// page's view mode (ItemEditForm never renders the Delete control while
+// isEditing is true).
+//
+// This is the first delete trigger anywhere in the app, and it's a *soft*
+// delete: only items.deleted_at is written here. item_tags/item_images/
+// item_links/item_attachments/list_items are never touched, so a later
+// Restore (lib/actions/trash.ts) brings the item back exactly as it was.
+//
+// Ownership/not-found: same .eq("user_id", user.id).is("deleted_at", null)
+// check as updateItemAction -- a request naming another user's item id (or
+// one that's already soft-deleted) resolves to the same plain not-found
+// error, never a distinguishable one.
+export async function deleteItemAction(
+  itemId: string,
+  _prevState: DeleteItemActionState,
+  _formData: FormData,
+): Promise<DeleteItemActionState> {
+  // Neither is read -- there's no field to validate for a Delete confirm
+  // click, just an item id already bound into this action -- but both stay
+  // in the signature since useActionState always calls its action as
+  // (prevState, formData). Referenced here (not just underscore-prefixed)
+  // to keep `npm run lint` clean, same pattern the mocked Storage call
+  // signatures in lib/actions/covers.test.ts/attachments.test.ts already use.
+  void _prevState;
+  void _formData;
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // request to /login before this route/action is ever reachable.
+    return { error: "You must be signed in to delete an item." };
+  }
+
+  const { data: item } = await supabase
+    .from("items")
+    .select("id, category_id")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { error: "This item could not be found." };
+  }
+
+  const { data: category } = await supabase
+    .from("categories")
+    .select("slug")
+    .eq("id", item.category_id)
+    .maybeSingle();
+  if (!category) {
+    return { error: "This item could not be found." };
+  }
+
+  const { error: updateError } = await supabase
+    .from("items")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("id", itemId);
+  if (updateError) {
+    return { error: "Failed to delete this item. Please try again." };
+  }
+
+  // Same "redirect back to a real page after the write" convention as
+  // updateItemAction/quickAddItemAction -- the item's own detail page 404s
+  // for anyone once deleted_at is set (getItemDetail's existing
+  // .is("deleted_at", null) filter), so this redirects to the category
+  // library view instead, matching the issue's own acceptance criteria.
+  redirect(`/${category.slug}`);
 }
 
 // Server Action backing LibraryView.tsx's search box (issue #22). A thin

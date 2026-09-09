@@ -142,3 +142,16 @@ export const initialItemFormState: ItemFormState = {
   formError: null,
   fieldErrors: {},
 };
+
+// Result shape for deleteItemAction (issue #25, lib/actions/items.ts) --
+// no fieldErrors needed (there's no form field to attach one to, just a
+// Delete/Confirm click), so this is its own minimal type rather than
+// reusing ItemFormState. Lives here rather than in items.ts itself: that
+// module is a "use server" file, which Next.js only allows to export async
+// functions from -- a plain object/type export there breaks the build
+// ("A 'use server' file can only export async functions"), same reason
+// ItemFormState/initialItemFormState above already live in this file
+// instead of lib/actions/items.ts.
+export type DeleteItemActionState = { error: string | null };
+
+export const initialDeleteItemActionState: DeleteItemActionState = { error: null };

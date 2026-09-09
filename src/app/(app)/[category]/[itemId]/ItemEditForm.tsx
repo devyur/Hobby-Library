@@ -15,9 +15,13 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
-import { updateItemAction } from "@/lib/actions/items";
+import { deleteItemAction, updateItemAction } from "@/lib/actions/items";
 import type { Database } from "@/lib/supabase/types";
-import { editItemSchema, initialItemFormState } from "@/lib/validation/items";
+import {
+  editItemSchema,
+  initialDeleteItemActionState,
+  initialItemFormState,
+} from "@/lib/validation/items";
 
 type ItemStatus = Database["public"]["Enums"]["item_status"];
 type PriorityLevel = Database["public"]["Enums"]["priority_level"];
@@ -103,6 +107,19 @@ export function ItemEditForm({
     initialItemFormState,
   );
   const [isEditing, setIsEditing] = useState(false);
+  // Delete (issue #25) -- its own useActionState/form pair, independent of
+  // the update form above, same redirect-on-success convention
+  // updateItemAction already uses. showDeleteConfirm gates an inline
+  // "Delete this item? Confirm / Cancel" panel (no Dialog primitive exists,
+  // per the issue's Constraints -- same showNudge pattern this component
+  // already uses below) -- a single click on Delete never deletes
+  // immediately.
+  const boundDeleteItemAction = deleteItemAction.bind(null, itemId);
+  const [deleteState, deleteFormAction, isDeleting] = useActionState(
+    boundDeleteItemAction,
+    initialDeleteItemActionState,
+  );
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // Owned here, not inside ItemTagsEditor -- see that component's own
   // comment: the view/edit toggle below remounts it on every switch, so its
   // attached-tags list has to survive in a parent that doesn't unmount.
@@ -259,11 +276,47 @@ export function ItemEditForm({
             <Button type="button" variant="outline" size="sm" onClick={handleEdit}>
               Edit
             </Button>
+            {/* Delete (issue #25) -- view mode only, matching how Edit
+                itself is scoped: never rendered while isEditing. */}
+            {!showDeleteConfirm ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                Delete
+              </Button>
+            ) : null}
           </div>
           {renderDatesAndTags()}
         </div>
 
         <NotesReview notes={notes} review={review} />
+
+        {showDeleteConfirm ? (
+          <div className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4">
+            <p className="text-sm text-text-primary">Delete this item?</p>
+            {deleteState.error ? (
+              <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+                {deleteState.error}
+              </p>
+            ) : null}
+            <form action={deleteFormAction} className="flex flex-wrap items-center gap-3">
+              <Button type="submit" disabled={isDeleting}>
+                {isDeleting ? "Deleting…" : "Confirm"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isDeleting}
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </form>
+          </div>
+        ) : null}
       </div>
     );
   }
