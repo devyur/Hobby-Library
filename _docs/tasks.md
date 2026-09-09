@@ -135,3 +135,7 @@ Description: Deploy the app to Vercel connected to the production Supabase proje
 ## 33. Grant service_role access to app tables — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/33)
 Goal: Let server-side admin tooling (cron jobs, exports, test/QA scripts) actually read/write app tables.
 Description: Discovered during #10's QA — every migration since #3 only grants table access to `authenticated`, never `service_role`, so a service-role-authenticated request currently gets `permission denied` on every app table. Add a migration granting `service_role` the access it needs, and document the reasoning in `database-schema.md` §4.
+
+## 34. Manually set/edit completed_at — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/34)
+Goal: Let a user manually set and later edit an item's completion date.
+Description: Discovered while grooming #16 — `database-schema.md` §3 designed `completed_at` as "set manually, never inferred automatically," but no V1 task ever scheduled the UI for it, and #16 deliberately left it untouched. Extend #16's edit surface to let a user set/clear `completed_at` (decide date-picker vs. text input, and whether it's only shown when status = Completed) without ever inferring it automatically from a status change.

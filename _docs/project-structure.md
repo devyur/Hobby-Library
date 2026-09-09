@@ -90,9 +90,14 @@ Hobby Library/
 │   │   │   ├── add/
 │   │   │   │   ├── page.tsx            # Full Add form (#14)
 │   │   │   │   └── AddItemForm.tsx
+│   │   │   ├── quick-add/
+│   │   │   │   ├── page.tsx            # Quick Add — title+category only (#15)
+│   │   │   │   └── QuickAddForm.tsx
 │   │   │   ├── [category]/
 │   │   │   │   ├── page.tsx            # library list/card view (#12); filters pending #22-24
-│   │   │   │   └── [itemId]/page.tsx   # item detail, read-only (#13); editing pending #16
+│   │   │   │   └── [itemId]/
+│   │   │   │       ├── page.tsx          # item detail (#13) + inline edit of status/rating/priority/notes/review (#16)
+│   │   │   │       └── ItemEditForm.tsx
 │   │   │   ├── lists/
 │   │   │   │   ├── page.tsx            # #10: placeholder until #26
 │   │   │   │   └── [listId]/page.tsx
