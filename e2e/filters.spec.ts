@@ -69,6 +69,7 @@ test.describe("Filtering (issue #23)", () => {
         .eq("slug", "games")
         .single();
       if (!gamesCategory) throw new Error("games category not found");
+      const gamesCategoryId = gamesCategory.id;
 
       const { data: subtypes } = await user
         .from("subtypes")
@@ -98,7 +99,7 @@ test.describe("Filtering (issue #23)", () => {
           .insert({
             user_id: userId,
             title: params.title,
-            category_id: gamesCategory.id,
+            category_id: gamesCategoryId,
             subtype_id: params.subtypeId,
             status: params.status,
             rating: params.rating,
