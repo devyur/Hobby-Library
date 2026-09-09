@@ -151,3 +151,7 @@ Description: Discovered while grooming #21 — Postgres FK cascades remove `item
 ## 37. Client-side resize/compress cover images before upload — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/37)
 Goal: Shrink cover images before upload so covers use far less of the free tier's ~1GB Storage / ~5GB-month bandwidth budget.
 Description: Discussed with the user while reasoning about free-tier headroom for potentially hundreds of covers per user. Resize client-side (browser Canvas, no new dependency) to a size appropriate for how covers actually render, re-encode at a reasonable quality, and keep #19's existing type/size validation as a safety net rather than a replacement.
+
+## 38. Make covers bucket public with cache-busting for cheap repeat loads — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/38)
+Goal: Let cover images cache in the browser across repeat app opens instead of being re-fetched from Supabase every page load.
+Description: Discussed with the user alongside #37 while reasoning about free-tier bandwidth. Signed URLs change on every request, so browsers never cache covers today. Switch `covers` to a public bucket (an accepted tradeoff — a leaked link only ever exposes non-sensitive cover art) served via `getPublicUrl()`, plus a version marker in the URL that changes only when a cover is actually replaced, so long browser caching doesn't serve a stale image after a replace.
