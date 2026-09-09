@@ -144,9 +144,8 @@ Description: Discovered while grooming #16 — `database-schema.md` §3 designed
 Goal: Let a user clear an item's cover image entirely, back to the no-cover placeholder.
 Description: Discovered while grooming #19 — cover upload only builds upload/replace, with no "clear the cover" path. Add a remove control that deletes both the storage object and the `item_images` row (never just one), owner-only, per `_docs/database-schema.md` §7.
 
-## 36. Clean up Storage objects on permanent item delete — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/36)
-Goal: Permanently deleting an item also deletes its Storage objects, not just its DB rows.
-Description: Discovered while grooming #21 — Postgres FK cascades remove `item_images`/`item_attachments` rows on delete, but Supabase Storage objects aren't linked to FKs, so nothing deletes the underlying files in the `covers`/`attachments` buckets. Wire this into #25's Permanent Delete action; a failed Storage delete must not silently pass as success.
+## 36. ~~Clean up Storage objects on permanent item delete~~ — folded into #25
+Folded into #25 during its grooming rather than tracked separately — Permanent Delete's storage cleanup (both `covers` and `attachments` buckets, failure blocks the row delete) shipped as part of #25. [Closed issue](https://github.com/devyur/Hobby-Library/issues/36).
 
 ## 37. Client-side resize/compress cover images before upload — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/37)
 Goal: Shrink cover images before upload so covers use far less of the free tier's ~1GB Storage / ~5GB-month bandwidth budget.
@@ -155,3 +154,11 @@ Description: Discussed with the user while reasoning about free-tier headroom fo
 ## 38. Make covers bucket public with cache-busting for cheap repeat loads — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/38)
 Goal: Let cover images cache in the browser across repeat app opens instead of being re-fetched from Supabase every page load.
 Description: Discussed with the user alongside #37 while reasoning about free-tier bandwidth. Signed URLs change on every request, so browsers never cache covers today. Switch `covers` to a public bucket (an accepted tradeoff — a leaked link only ever exposes non-sensitive cover art) served via `getPublicUrl()`, plus a version marker in the URL that changes only when a cover is actually replaced, so long browser caching doesn't serve a stale image after a replace.
+
+## 39. Sort direction toggle (ascending/descending) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/39)
+Goal: Let a user flip each sort dimension's direction instead of the one fixed direction #24 shipped.
+Description: Discovered while grooming #24 — needs a product decision first (is this wanted, and does `default_sort` need a direction column or paired enum values like `priority_asc`/`priority_desc`) before it's ready for engineering.
+
+## 40. Additional sort options (e.g. Rating, Title A-Z) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/40)
+Goal: Decide whether sort dimensions beyond #24's three (Recently Added, Priority, Status) belong in V1.
+Description: Discovered while grooming #24 — Rating and Title A-Z both came up as plausible additions but aren't in `plan.md` §13's V1 list. Needs a product decision (and a `plan.md` update if approved) before implementation.

@@ -199,7 +199,7 @@ No dedicated tables. All stats (totals, per-status counts, average rating, compl
 
 - `covers` — item cover images, path-scoped per user. Since #19, a single cover lives at the fixed extension-less path `{user_id}/{item_id}/cover`, uploaded with `upsert: true` so replacing a cover overwrites in place (no orphaned object, no race against the partial unique index on `item_images`). Private bucket with per-user `insert`/`update`/`select`/`delete` storage policies (added ahead of need, during #12); `file_size_limit` (5MB) and `allowed_mime_types` (`image/jpeg`, `image/png`, `image/webp`) were added to the bucket itself in a later #19 migration as storage-layer defense-in-depth alongside the app-level check.
 - `attachments` — uploaded reference files, same per-user path-scoping, but per-file (not fixed-path) since an item can have many: `{user_id}/{item_id}/{attachment_id}`. Created by #21 with its bucket-level `file_size_limit` (2MB) and `allowed_mime_types` (`text/plain`, `text/markdown`, `application/pdf`) set at creation time, alongside app-level checks and a 10-attachments-per-item cap enforced in the Server Action.
-- Storage objects in either bucket are not linked to Postgres FKs, so permanently deleting an item does not currently clean them up — tracked as [#36](https://github.com/devyur/Hobby-Library/issues/36).
+- Storage objects in either bucket are not linked to Postgres FKs, so Permanent Delete (§9) explicitly clears both buckets' `{user_id}/{item_id}/...` paths itself before deleting the row — this doesn't happen automatically from the cascade alone.
 
 ---
 
@@ -211,7 +211,7 @@ Export walks `items` joined with `item_tags→tags`, `item_links`, `item_attachm
 
 ## 9. Trash / soft delete
 
-Deleting an item sets `deleted_at = now()` rather than removing the row. Trash view = `WHERE deleted_at IS NOT NULL`. Restore = set back to `NULL`. Permanent delete = actual `DELETE`, which cascades to the item's tags/images/links/attachments/list memberships.
+Deleting an item sets `deleted_at = now()` rather than removing the row. Trash view = `WHERE deleted_at IS NOT NULL`. Restore = set back to `NULL`. Permanent delete (#25) first clears the item's Storage objects in both the `covers` and `attachments` buckets (`{user_id}/{item_id}/...`) — a failure there blocks the row delete entirely, so an item never loses its files without also losing its row, or vice versa — then does the actual `DELETE`, which cascades to the item's tags/images/links/attachments/list memberships.
 
 ---
 

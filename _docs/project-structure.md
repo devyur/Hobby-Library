@@ -40,7 +40,7 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 - `lib/supabase/client.ts` — browser Supabase client
 - `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
 - `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB. Regenerating via the literal CLI requires either Docker/Podman on `PATH` (for `--db-url`) or a Supabase personal access token via `SUPABASE_ACCESS_TOKEN` (for `--linked`/`--project-id`). In an environment with neither (e.g. a Docker-less sandbox with no PAT configured), `@supabase/postgrest-typegen` — the same introspection/codegen engine the CLI wraps — run directly against the live schema is the accepted fallback, provided the resulting file's header documents which tool generated it and why the literal CLI wasn't used. See [#7](https://github.com/devyur/Hobby-Library/issues/7) for the decision record.
-- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, plus `lists.ts` once #26 lands)
+- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, `trash.ts`, plus `lists.ts` once #26 lands)
 - `lib/queries/` — reusable read queries (`getItems`, `getDashboardStats`, …)
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
 - `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
@@ -94,14 +94,14 @@ Hobby Library/
 │   │   │   │   ├── page.tsx            # Quick Add — title+category only (#15)
 │   │   │   │   └── QuickAddForm.tsx
 │   │   │   ├── [category]/
-│   │   │   │   ├── page.tsx            # library list/card view (#12) + search (#22); structured filters/sort pending #23-24
+│   │   │   │   ├── page.tsx            # library list/card view (#12) + search (#22) + filters (#23) + sort (#24)
 │   │   │   │   └── [itemId]/
-│   │   │   │       ├── page.tsx          # item detail (#13) + inline edit of status/rating/priority/notes/review (#16); tags (#17), subtype (#18), cover (#19), links (#20), attachments (#21) each have their own always-interactive editor rendered alongside it
+│   │   │   │       ├── page.tsx          # item detail (#13) + inline edit of status/rating/priority/notes/review (#16) + Delete (#25); tags (#17), subtype (#18), cover (#19), links (#20), attachments (#21) each have their own always-interactive editor rendered alongside it
 │   │   │   │       └── ItemEditForm.tsx
 │   │   │   ├── lists/
 │   │   │   │   ├── page.tsx            # #10: placeholder until #26
 │   │   │   │   └── [listId]/page.tsx
-│   │   │   ├── trash/page.tsx          # #10: placeholder until #25
+│   │   │   ├── trash/page.tsx          # Restore + Permanent Delete (#25)
 │   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11)
 │   │   ├── api/
 │   │   │   └── export/route.ts
