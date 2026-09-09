@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { CoverThumbnail } from "@/components/items/CoverThumbnail";
+import { CoverUploadControl } from "@/components/items/CoverUploadControl";
 import { ItemAttachments } from "@/components/items/ItemAttachments";
 import { ItemLinks } from "@/components/items/ItemLinks";
 import { getItemDetail } from "@/lib/queries/items";
@@ -25,11 +25,14 @@ import { ItemEditForm } from "./ItemEditForm";
 // ui-style-guide.md §3's density exception applies here: spacious/editorial
 // layout, unlike the compact library list/card views.
 //
-// Title, category/subtype label, and cover stay here (never editable, per
-// #16's Out of scope) -- status/rating/priority/notes/review, plus the
-// Added/Completed dates and Tags that visually sit alongside them, are
-// owned by ItemEditForm, a client component that needs its own React state
-// for the view/edit toggle.
+// Title and category/subtype label stay here, permanently read-only.
+// Cover also renders here via CoverUploadControl (issue #19 -- upload/
+// replace only, wrapping the read-only CoverThumbnail from #12) -- still
+// not inside ItemEditForm.tsx, whose own header comment explains why it
+// stays out of that form's Edit/Save toggle. status/rating/priority/notes/
+// review, plus the Added/Completed dates and Tags that visually sit
+// alongside them, are owned by ItemEditForm, a client component that needs
+// its own React state for the view/edit toggle.
 export default async function ItemDetailPage({
   params,
 }: {
@@ -76,7 +79,7 @@ export default async function ItemDetailPage({
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-10">
       <div className="flex flex-col gap-6 sm:flex-row">
         <div className="w-full shrink-0 sm:w-56">
-          <CoverThumbnail coverUrl={item.coverUrl} title={item.title} />
+          <CoverUploadControl itemId={item.id} coverUrl={item.coverUrl} title={item.title} />
         </div>
 
         <div className="flex flex-1 flex-col gap-3">
