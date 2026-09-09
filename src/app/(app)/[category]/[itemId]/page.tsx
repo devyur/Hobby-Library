@@ -4,6 +4,7 @@ import { CoverThumbnail } from "@/components/items/CoverThumbnail";
 import { ItemAttachments } from "@/components/items/ItemAttachments";
 import { ItemLinks } from "@/components/items/ItemLinks";
 import { getItemDetail } from "@/lib/queries/items";
+import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
 
 import { ItemEditForm } from "./ItemEditForm";
@@ -52,6 +53,12 @@ export default async function ItemDetailPage({
     notFound();
   }
 
+  // Autocomplete data source for the Tags section's "add a tag" input
+  // (issue #17) -- every tag visible to the signed-in user (predefined +
+  // their own custom tags), same scope the Full Add form's checkbox list
+  // already uses.
+  const tagSuggestions = await getTags();
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-10">
       <div className="flex flex-col gap-6 sm:flex-row">
@@ -82,6 +89,7 @@ export default async function ItemDetailPage({
         createdAt={item.createdAt}
         completedAt={item.completedAt}
         tags={item.tags}
+        tagSuggestions={tagSuggestions}
       />
 
       <ItemLinks links={item.links} />

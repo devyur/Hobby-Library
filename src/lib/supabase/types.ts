@@ -1,15 +1,15 @@
 // Generated types for public schema.
 //
-// Provenance note (issue #7, re-generated for issue #8): this sandbox has
-// neither Docker/Podman (required by `supabase gen types typescript
-// --db-url`, which spins up a local Postgres container to introspect) nor a
-// non-interactive Supabase access token (required by `supabase gen types
-// typescript --linked`/`--project-id`, which calls the Management API --
-// `supabase login` needs an interactive browser). Both were re-confirmed
-// absent for issue #8 (`which docker`/`which podman` -> not found,
-// `SUPABASE_ACCESS_TOKEN` unset; `supabase gen types typescript --db-url
-// ...` still fails with `LegacyDockerRunError: docker: command not found
-// (podman also not found)`), matching the exact failure documented in #7.
+// Provenance note (issue #7, re-generated for issue #8, re-confirmed for
+// issue #17): this sandbox has neither Docker/Podman (required by `supabase
+// gen types typescript --db-url`, which spins up a local Postgres container
+// to introspect) nor a non-interactive Supabase access token (required by
+// `supabase gen types typescript --linked`/`--project-id`, which calls the
+// Management API -- `supabase login` needs an interactive browser). Both
+// were re-confirmed absent for issue #17 (`which docker`/`which podman` ->
+// not found; `supabase gen types typescript --db-url ...` still fails with
+// `LegacyDockerRunError: docker: command not found (podman also not
+// found)`), matching the exact failure documented in #7/#8.
 //
 // This file is still CLI-generated content, not hand-written: it was
 // produced by running `@supabase/postgrest-typegen` -- the same
@@ -18,13 +18,14 @@
 // https://www.npmjs.com/package/@supabase/postgrest-typegen, "the
 // type-generation engine behind `supabase gen types`") -- directly against
 // the live project's Postgres connection (the same pooler connection used
-// for `db push` in #4-#8), bypassing only the CLI binary's Docker/OAuth
-// orchestration, not the generator itself. Output is byte-for-byte what
-// that engine produces from the live schema, now including the
-// `user_preferences` table added by #8's migration. Regenerate via the real
-// `supabase` CLI once this repo is `supabase link`ed in an environment with
-// Docker or an access token (see AGENTS.md: regenerate after any schema
-// change).
+// for `db push` in #4-#8/#17), bypassing only the CLI binary's Docker/OAuth
+// orchestration, not the generator itself. Output is byte-for-byte what that
+// engine produces from the live schema after #17's migration -- unchanged
+// from the prior generation, since #17 only added RLS policies/grants and a
+// unique index to `tags`/`item_tags`, none of which this generator's output
+// (columns/relationships) reflects. Regenerate via the real `supabase` CLI
+// once this repo is `supabase link`ed in an environment with Docker or an
+// access token (see AGENTS.md: regenerate after any schema change).
 
 export type Json =
   | string

@@ -3,11 +3,11 @@
 import { useActionState, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
+import { ItemTagsEditor, type TagOption } from "@/components/items/ItemTagsEditor";
 import { NotesReview } from "@/components/items/NotesReview";
 import { PriorityBadge } from "@/components/items/PriorityBadge";
 import { RatingBadge } from "@/components/items/RatingBadge";
 import { StatusPill } from "@/components/items/StatusPill";
-import { TagChips } from "@/components/items/TagChips";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,7 +59,8 @@ export function ItemEditForm({
   review,
   createdAt,
   completedAt,
-  tags,
+  tags: initialTags,
+  tagSuggestions,
 }: {
   itemId: string;
   status: ItemStatus;
@@ -69,7 +70,8 @@ export function ItemEditForm({
   review: string | null;
   createdAt: string;
   completedAt: string | null;
-  tags: string[];
+  tags: TagOption[];
+  tagSuggestions: TagOption[];
 }) {
   const boundUpdateItemAction = updateItemAction.bind(null, itemId);
   const [state, formAction, isPending] = useActionState(
@@ -77,6 +79,10 @@ export function ItemEditForm({
     initialItemFormState,
   );
   const [isEditing, setIsEditing] = useState(false);
+  // Owned here, not inside ItemTagsEditor -- see that component's own
+  // comment: the view/edit toggle below remounts it on every switch, so its
+  // attached-tags list has to survive in a parent that doesn't unmount.
+  const [tags, setTags] = useState<TagOption[]>(initialTags);
   const [clientErrors, setClientErrors] = useState<Record<string, string>>({});
   const [showNudge, setShowNudge] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
@@ -178,12 +184,16 @@ export function ItemEditForm({
           ) : null}
         </dl>
 
-        {tags.length > 0 ? (
-          <div className="flex flex-col gap-1">
-            <h2 className="text-sm font-medium text-text-primary">Tags</h2>
-            <TagChips tags={tags} maxVisible={tags.length} />
-          </div>
-        ) : null}
+        {/* Always interactive, independent of isEditing (issue #17) --
+            rendered by this same renderDatesAndTags() call in both the view
+            and edit branches below, so it's never gated behind #16's
+            Edit/Save toggle. */}
+        <ItemTagsEditor
+          itemId={itemId}
+          tags={tags}
+          onTagsChange={setTags}
+          suggestionPool={tagSuggestions}
+        />
       </div>
     );
   }

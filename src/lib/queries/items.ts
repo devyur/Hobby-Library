@@ -98,6 +98,17 @@ export async function getLibraryItems(categoryId: string): Promise<LibraryItem[]
 
 // Item detail page (issue #13). Every field from plan.md §3 plus the two
 // structural relations (Links, Attachments) the detail page also renders.
+//
+// ItemTag carries `id` alongside `name` (unlike LibraryItem's bare
+// `tags: string[]` above) -- issue #17's detach control needs a tag_id to
+// act on, which a plain name string can't provide. getLibraryItems/
+// TagChips's read-only Card/List views have no such need and stay
+// unchanged.
+export interface ItemTag {
+  id: string;
+  name: string;
+}
+
 export interface ItemLink {
   id: string;
   url: string;
@@ -122,7 +133,7 @@ export interface ItemDetail {
   createdAt: string;
   completedAt: string | null;
   subtypeName: string;
-  tags: string[];
+  tags: ItemTag[];
   coverUrl: string | null;
   links: ItemLink[];
   attachments: ItemAttachment[];
@@ -159,7 +170,7 @@ export async function getItemDetail(
       created_at,
       completed_at,
       subtypes ( name ),
-      item_tags ( tags ( name ) ),
+      item_tags ( tags ( id, name ) ),
       item_images ( storage_path, is_cover ),
       item_links ( id, url, label ),
       item_attachments ( id, filename, mime_type, size_bytes )
@@ -196,9 +207,9 @@ export async function getItemDetail(
   const tags = tagRows
     .map((itemTag) => {
       const tag = Array.isArray(itemTag.tags) ? itemTag.tags[0] : itemTag.tags;
-      return tag?.name ?? null;
+      return tag ? { id: tag.id, name: tag.name } : null;
     })
-    .filter((name): name is string => name !== null);
+    .filter((tag): tag is ItemTag => tag !== null);
 
   const links = Array.isArray(data.item_links) ? data.item_links : [];
   const attachments = Array.isArray(data.item_attachments) ? data.item_attachments : [];

@@ -61,10 +61,14 @@ test.describe("Full Add form (issue #14)", () => {
       await expect(page.getByText("Games · RPG")).toBeVisible();
       await expect(page.getByText("Planned")).toBeVisible();
 
-      // Nothing else was set -- no rating/priority badge, no Tags section.
+      // Nothing else was set -- no rating/priority badge, no Notes/Review
+      // section. The Tags heading itself is always present (issue #17 made
+      // it an always-interactive add-tag section, not conditional on
+      // already having tags) -- but with no tag chips attached.
       await expect(page.getByText(/\/10/)).toHaveCount(0);
       await expect(page.getByText(/^(Low|Medium|High)$/)).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Tags" })).toHaveCount(0);
+      await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Remove /i })).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Notes" })).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Review" })).toHaveCount(0);
 
@@ -174,8 +178,8 @@ test.describe("Full Add form (issue #14)", () => {
       await expect(page.getByText("Planned")).toBeVisible();
       await expect(page.getByText("7/10")).toBeVisible();
       await expect(page.getByText("High")).toBeVisible();
-      await expect(page.getByText("fantasy", { exact: true })).toBeVisible();
-      await expect(page.getByText("classic", { exact: true })).toBeVisible();
+      await expect(page.getByText("fantasy")).toBeVisible();
+      await expect(page.getByText("classic")).toBeVisible();
       await expect(page.getByText("Working notes here.")).toBeVisible();
       await expect(page.getByText("A considered review here.")).toBeVisible();
     } finally {

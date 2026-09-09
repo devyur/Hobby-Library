@@ -140,8 +140,10 @@ test.describe("Item detail page (issue #13)", () => {
       await expect(page.getByRole("img", { name: "Cover for Elden Ring" })).toBeVisible();
 
       // Tags: all 5 render, no "+N" truncation (unlike the library view).
+      // Not exact-text: issue #17 wraps each tag name together with its own
+      // remove ("x") control in the same element.
       for (const name of ["fantasy", "dark", "indie", "classic", "long"]) {
-        await expect(page.getByText(name, { exact: true })).toBeVisible();
+        await expect(page.getByText(name)).toBeVisible();
       }
       await expect(page.getByText(/^\+\d+$/)).toHaveCount(0);
 
@@ -238,8 +240,11 @@ test.describe("Item detail page (issue #13)", () => {
         page.getByRole("img", { name: /no cover image for untitled draft/i }),
       ).toBeVisible();
 
-      // No Tags heading at all (section fully collapses).
-      await expect(page.getByRole("heading", { name: "Tags" })).toHaveCount(0);
+      // The Tags heading itself always renders now (issue #17 made it an
+      // always-interactive add-tag section, not conditional on already
+      // having tags) -- but with no tag chips/remove controls attached.
+      await expect(page.getByRole("heading", { name: "Tags" })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Remove /i })).toHaveCount(0);
 
       // Neither Notes nor Review heading/section appears.
       await expect(page.getByRole("heading", { name: "Notes" })).toHaveCount(0);

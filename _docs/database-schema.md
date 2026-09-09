@@ -62,6 +62,8 @@ Unique per (category_id, lower(name), user_id) to prevent duplicates within the 
 
 Tags are global (not scoped to a category) — matches the plan's example of a Book carrying `programming`/`Python`/`career` tags.
 
+Unique per (lower(name), user_id), NULLS NOT DISTINCT — mirrors `subtypes`' uniqueness guard, added by issue #17's migration alongside `tags`' first INSERT policy (a signed-in user may only create a tag with `user_id` equal to their own id). This index does not stop a custom tag from duplicating a predefined tag's name, since they have different `user_id` values; that cross-scope duplicate is prevented only by the app-level lookup-before-create check in `src/lib/actions/tags.ts`.
+
 ### `items`
 | column | type | notes |
 |---|---|---|
@@ -84,9 +86,11 @@ Tags are global (not scoped to a category) — matches the plan's example of a B
 | column | type |
 |---|---|
 | item_id | FK items.id, cascade delete |
-| tag_id | FK tags.id |
+| tag_id | FK tags.id, cascade delete |
 
 Primary key `(item_id, tag_id)`.
+
+`tag_id`'s cascade was added by issue #17's follow-up migration (`20260909110000_cascade_item_tags_tag_delete.sql`) — it originally had no `ON DELETE` action, which was inert while every `tags` row was predefined (never deleted by any real path). #17 adds user-owned `tags` rows, and with them the first realistic way a `tags` row gets deleted: cascading from the owning user's `auth.users` row on account deletion. Without this fix, that cascade failed outright (a foreign key violation) whenever the deleted user still had one of their own custom tags attached to any item.
 
 ### `item_images`
 | column | type | notes |
@@ -161,9 +165,11 @@ Added per the UI style guide decision to persist theme choice server-side (so it
 
 ## 4. Row-Level Security
 
-All user-owned tables get RLS policies scoping reads/writes to `auth.uid()` (directly via `user_id`, or via a join to `items.user_id`/`lists.user_id` for child tables). `categories` and global predefined `subtypes`/`tags` rows (`user_id IS NULL`) are readable by all authenticated users, writable only via migration/seed (not through the app).
+All user-owned tables get RLS policies scoping reads/writes to `auth.uid()` (directly via `user_id`, or via a join to `items.user_id`/`lists.user_id` for child tables). `categories` and global predefined `subtypes`/`tags` rows (`user_id IS NULL`) are readable by all authenticated users, writable only via migration/seed (not through the app) — except `tags`, which since issue #17 also has an app-facing create path (a user creating their own custom tag): its SELECT policy scopes to `user_id IS NULL OR user_id = auth.uid()` (a custom tag is never visible to another user) and its INSERT policy's `WITH CHECK (user_id = auth.uid())` means a user can only ever create a tag owned by themselves.
 
 `list_items`' `insert`/`update` policies additionally require the referenced `item_id` to belong to the same user (an `exists` check against `items.user_id = auth.uid()`, alongside the usual `exists` check that the parent `lists` row belongs to the user). Without this, a user could add another user's item into their own list purely by knowing its id, since owning the list row alone isn't enough to prove ownership of the item being linked into it.
+
+Similarly, `item_tags_insert_own` (originally #5, revised by #17) additionally requires the referenced `tag_id` to be visible to the caller (`tags.user_id IS NULL OR tags.user_id = auth.uid()`), alongside its original `exists` check that the parent item belongs to the user. Without this, a user could attach another user's private custom tag to their own item purely by knowing its id, since owning the item alone isn't enough to prove the tag being attached is actually visible to them.
 
 ---
 
