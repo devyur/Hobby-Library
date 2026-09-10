@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { logoutAction } from "@/lib/actions/auth";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { ImportLibraryForm } from "@/components/settings/ImportLibraryForm";
 
 // Real Settings page (issue #11): the three things V1 Settings needs --
 // account email, sign-out, and the theme toggle. Replaces the #10 stub.
@@ -55,6 +56,28 @@ export default async function SettingsPage() {
         <Button asChild variant="outline">
           <Link href="/api/export">Export</Link>
         </Button>
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
+        <div>
+          <p className="text-sm text-text-secondary">Import</p>
+          <p className="text-sm text-text-primary">
+            Upload a previously exported JSON file to recreate its items and lists in your
+            library.
+          </p>
+          {/* Stated explicitly, not left silent (issue #30 AC): #29's export
+              never carries file bytes, so import has nothing to restore a
+              cover image or attachment from -- and no de-duplication exists
+              in V1, so re-importing the same file always creates a second,
+              full set of items/lists. */}
+          <p className="text-sm text-text-secondary">
+            Cover images and attachments are never restored by import (the export file never
+            contains file bytes, only metadata) -- re-add them manually afterward if wanted.
+            Importing the same file twice creates duplicate items and lists; there is no
+            de-duplication.
+          </p>
+        </div>
+        <ImportLibraryForm />
       </section>
     </div>
   );
