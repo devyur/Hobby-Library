@@ -182,3 +182,7 @@ Description: Discovered while grooming #28 — V1 ships four simple, independent
 ## 45. CSV export (secondary format) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/45)
 Goal: Let a user download their library as CSV in addition to JSON.
 Description: Discovered while grooming #29 — `plan.md` §23/`database-schema.md` §8 both treat CSV as optional/secondary to JSON. #29 was scoped to JSON only since CSV needs its own product decision (one CSV per entity vs. a flattened items CSV vs. something else, and whether CSV round-trips through #30 at all) that doesn't have an obvious answer and isn't needed for #30's dependency on #29's JSON shape to stay unambiguous.
+
+## 46. Fix created_at hydration mismatch near local-midnight boundary — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/46)
+Goal: Stop a real React hydration-mismatch error on the item detail page's "Added:" row when the server and viewer disagree on the calendar date near local midnight.
+Description: Discovered and independently reproduced twice by QA while verifying #34's timezone fix for `completed_at`. `created_at`/`deleted_at` are genuine timestamps correctly meant to display in local time (unlike `completed_at`, which needed UTC-forced formatting) — the bug is a rendering-correctness issue (server/client date disagreement near midnight), not a wrong-timezone issue. Likely fix: defer local-time formatting to a client-only render path instead of computing it during SSR.
