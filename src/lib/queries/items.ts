@@ -22,10 +22,35 @@ export interface LibraryItem {
   coverUrl: string | null;
 }
 
-// Signed URLs are resolved per request rather than cached -- the `covers`
-// bucket is private/path-scoped (database-schema.md §7), so getPublicUrl()
-// is never used. 1 hour comfortably outlives a single page render/request.
-const COVER_SIGNED_URL_TTL_SECONDS = 60 * 60;
+// Shared by getLibraryItems and getItemDetail below (issue #38). The
+// `covers` bucket is public (migration 20260910150000), so getPublicUrl()
+// returns a stable, un-signed URL with no network round trip -- unlike
+// createSignedUrl(), this is synchronous. The `?v=` param is sourced from
+// item_images.updated_at (added by the same migration, maintained by the
+// item_images_set_updated_at trigger, and advanced on every replace by
+// uploadCoverAction's now-real UPDATE branch -- lib/actions/covers.ts) so a
+// long client-side cache lifetime for this URL never serves stale bytes
+// after a cover is replaced: the path stays fixed, but the query string
+// changes, which is enough for the browser to treat it as a new resource.
+function resolvePublicCoverUrl(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  coverImage: { storage_path: string; updated_at: string },
+): string | null {
+  const { data } = supabase.storage.from("covers").getPublicUrl(coverImage.storage_path);
+  if (!data?.publicUrl) return null;
+  const version = new Date(coverImage.updated_at).getTime();
+  return `${data.publicUrl}?v=${version}`;
+}
+
+// The `attachments` bucket is private/path-scoped (database-schema.md §7),
+// so its download URLs still need a per-request signed URL -- 1 hour
+// comfortably outlives a single page render/request. The `covers` bucket
+// is public since issue #38: cover URLs are resolved via getPublicUrl()
+// below instead, with a `?v=` cache-busting param sourced from
+// item_images.updated_at so a long browser cache lifetime never serves
+// stale bytes after a replace (see getLibraryItems'/getItemDetail's cover
+// resolution below).
+const ATTACHMENT_SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 // Filter dimensions added by issue #23, all optional and all AND'd together
 // (and AND'd with searchTerm when both are present) -- subtype/status are
@@ -158,7 +183,7 @@ export async function getLibraryItems(
       priority,
       subtypes ( name ),
       item_tags ( tags ( name ) ),
-      item_images ( storage_path, is_cover )
+      item_images ( storage_path, is_cover, updated_at )
     `,
     )
     .eq("category_id", categoryId)
@@ -214,13 +239,7 @@ export async function getLibraryItems(
       const images = Array.isArray(row.item_images) ? row.item_images : [];
       const coverImage = images.find((image) => image.is_cover);
 
-      let coverUrl: string | null = null;
-      if (coverImage) {
-        const { data: signed } = await supabase.storage
-          .from("covers")
-          .createSignedUrl(coverImage.storage_path, COVER_SIGNED_URL_TTL_SECONDS);
-        coverUrl = signed?.signedUrl ?? null;
-      }
+      const coverUrl = coverImage ? resolvePublicCoverUrl(supabase, coverImage) : null;
 
       const tagRows = Array.isArray(row.item_tags) ? row.item_tags : [];
       const tags = tagRows
@@ -304,9 +323,10 @@ export interface ItemDetail {
 // query error (invalid input syntax, not a thrown JS exception -- postgrest-
 // js never throws for a query-level error) rather than data; that and every
 // other case above all resolve to a `null` return here, so the route's
-// `notFound()` call can't distinguish any of them. Reuses the same signed-
-// URL-for-cover pattern and defensive embedded-resource normalization as
-// getLibraryItems above, in one query per relation (no per-row N+1).
+// `notFound()` call can't distinguish any of them. Reuses the same public-
+// URL-for-cover resolution (resolvePublicCoverUrl, issue #38) and defensive
+// embedded-resource normalization as getLibraryItems above, in one query
+// per relation (no per-row N+1).
 export async function getItemDetail(
   categoryId: string,
   itemId: string,
@@ -330,7 +350,7 @@ export async function getItemDetail(
       subtype_id,
       subtypes ( name ),
       item_tags ( tags ( id, name ) ),
-      item_images ( storage_path, is_cover ),
+      item_images ( storage_path, is_cover, updated_at ),
       item_links ( id, url, label ),
       item_attachments ( id, filename, mime_type, size_bytes, storage_path )
     `,
@@ -358,13 +378,7 @@ export async function getItemDetail(
   const images = Array.isArray(data.item_images) ? data.item_images : [];
   const coverImage = images.find((image) => image.is_cover);
 
-  let coverUrl: string | null = null;
-  if (coverImage) {
-    const { data: signed } = await supabase.storage
-      .from("covers")
-      .createSignedUrl(coverImage.storage_path, COVER_SIGNED_URL_TTL_SECONDS);
-    coverUrl = signed?.signedUrl ?? null;
-  }
+  const coverUrl = coverImage ? resolvePublicCoverUrl(supabase, coverImage) : null;
 
   const tagRows = Array.isArray(data.item_tags) ? data.item_tags : [];
   const tags = tagRows
@@ -377,16 +391,16 @@ export async function getItemDetail(
   const links = Array.isArray(data.item_links) ? data.item_links : [];
   const attachmentRows = Array.isArray(data.item_attachments) ? data.item_attachments : [];
 
-  // Signed download URLs resolved eagerly, one per attachment, same
-  // per-request (never cached) reasoning as coverUrl above -- the
-  // `attachments` bucket is private/path-scoped too. `{ download: filename }`
-  // is what makes the browser save under the real filename instead of the
-  // opaque {attachment_id} path segment (issue #21's Constraints).
+  // Signed download URLs resolved eagerly, one per attachment, per-request
+  // (never cached) -- the `attachments` bucket stays private (issue #38's
+  // Out of scope), unlike `covers` above. `{ download: filename }` is what
+  // makes the browser save under the real filename instead of the opaque
+  // {attachment_id} path segment (issue #21's Constraints).
   const attachments = await Promise.all(
     attachmentRows.map(async (attachment) => {
       const { data: signed } = await supabase.storage
         .from("attachments")
-        .createSignedUrl(attachment.storage_path, COVER_SIGNED_URL_TTL_SECONDS, {
+        .createSignedUrl(attachment.storage_path, ATTACHMENT_SIGNED_URL_TTL_SECONDS, {
           download: attachment.filename,
         });
       return {

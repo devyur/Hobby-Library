@@ -8,8 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // check short-circuiting before storage.upload is ever called, and (3) the
 // "check for an existing is_cover=true row first" branch -- that a
 // first-ever upload inserts one item_images row, while a replace uploads to
-// storage but never calls item_images.insert again. Same createClient/
-// redirect mocking shape as lib/actions/items.test.ts.
+// storage AND (since issue #38) UPDATEs that existing row rather than
+// no-opping, so its updated_at trigger fires and the public cover URL's
+// `?v=` cache-busting param actually advances. Same createClient/redirect
+// mocking shape as lib/actions/items.test.ts.
 
 const createClientMock = vi.fn();
 vi.mock("@/lib/supabase/server", () => ({
@@ -35,6 +37,7 @@ function fakeSupabase(options: {
   existingCover?: FakeRow;
   uploadError?: { message: string } | null;
   insertError?: { message: string } | null;
+  updateError?: { message: string } | null;
   removeStorageError?: { message: string } | null;
   deleteRowError?: { message: string } | null;
 }) {
@@ -65,6 +68,15 @@ function fakeSupabase(options: {
     // chained in the action) -- resolved directly as a promise-like.
     then: (resolve: (v: { error: unknown }) => void) =>
       resolve({ error: options.insertError ?? null }),
+  }));
+  const itemImagesUpdateMock = vi.fn(() => ({
+    eq: () => ({
+      // .update({...}).eq("id", ...) itself is the terminal call in
+      // uploadCoverAction's replace branch (issue #38) -- resolved directly
+      // as a promise-like, same shape as itemImagesDeleteMock below.
+      then: (resolve: (v: { error: unknown }) => void) =>
+        resolve({ error: options.updateError ?? null }),
+    }),
   }));
   const itemImagesDeleteMock = vi.fn(() => ({
     eq: () => ({
@@ -105,6 +117,7 @@ function fakeSupabase(options: {
           }),
         }),
         insert: itemImagesInsertMock,
+        update: itemImagesUpdateMock,
         delete: itemImagesDeleteMock,
       };
     }
@@ -118,6 +131,7 @@ function fakeSupabase(options: {
     uploadMock,
     removeMock,
     itemImagesInsertMock,
+    itemImagesUpdateMock,
     itemImagesDeleteMock,
   };
 }
@@ -245,7 +259,7 @@ describe("uploadCoverAction", () => {
     });
   });
 
-  it("replacing an existing cover overwrites the same storage object but never inserts a second item_images row", async () => {
+  it("replacing an existing cover overwrites the same storage object, never inserts a second item_images row, and UPDATEs the existing row instead of no-opping (issue #38 -- so updated_at's trigger fires)", async () => {
     const supabase = fakeSupabase({
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
@@ -260,6 +274,30 @@ describe("uploadCoverAction", () => {
 
     expect(supabase.uploadMock).toHaveBeenCalledTimes(1);
     expect(supabase.itemImagesInsertMock).not.toHaveBeenCalled();
+    expect(supabase.itemImagesUpdateMock).toHaveBeenCalledTimes(1);
+    expect(supabase.itemImagesUpdateMock).toHaveBeenCalledWith({
+      storage_path: "user-1/item-1/cover",
+    });
+  });
+
+  it("a row-update failure on replace returns a clean error and never redirects", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      existingCover: { id: "image-1" },
+      updateError: { message: "row update exploded" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await uploadCoverAction(
+      "item-1",
+      initialUploadCoverState,
+      formDataWithFile(VALID_JPEG),
+    );
+
+    expect(result.error).toMatch(/saving it failed/i);
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 
   it("a storage upload failure returns a clean error and never touches item_images", async () => {
@@ -279,6 +317,7 @@ describe("uploadCoverAction", () => {
 
     expect(result.error).toMatch(/failed to upload/i);
     expect(supabase.itemImagesInsertMock).not.toHaveBeenCalled();
+    expect(supabase.itemImagesUpdateMock).not.toHaveBeenCalled();
     expect(redirectMock).not.toHaveBeenCalled();
   });
 });

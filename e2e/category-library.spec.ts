@@ -246,8 +246,12 @@ test.describe("Category library view (issue #12)", () => {
       const coverSrc = await hadesCard
         .getByRole("img", { name: "Cover for Hades" })
         .getAttribute("src");
-      expect(coverSrc).toContain("/storage/v1/object/sign/covers/");
+      // Public URL (issue #38 -- the `covers` bucket is public, so this is
+      // getPublicUrl(), not a signed URL) carrying a `?v=` cache-busting
+      // param sourced from item_images.updated_at.
+      expect(coverSrc).toContain("/storage/v1/object/public/covers/");
       expect(coverSrc).toContain(coverStoragePath!.split("/").pop());
+      expect(coverSrc).toMatch(/\?v=\d+$/);
 
       await expect(
         eldenCard.getByRole("img", { name: /no cover image for elden ring/i }),

@@ -105,12 +105,19 @@ export async function uploadCoverAction(
   }
 
   // Check for an existing is_cover=true row first to decide insert vs.
-  // no-op (issue #19's Constraints): on the item's first-ever cover upload,
-  // insert one row. On a later replacement, that row's storage_path is
-  // already correct (the path never changes) -- only the storage object
-  // above changed, so no row write is needed here at all. This is what
-  // keeps a replace at exactly one item_images row with is_cover=true,
-  // never zero, never two.
+  // update (issue #19's Constraints; the update branch added by #38). On
+  // the item's first-ever cover upload, insert one row. On a later
+  // replacement, that row's storage_path is already correct (the path
+  // never changes) -- only the storage object above changed -- but the row
+  // itself must still be written to, not skipped: an UPDATE (even one that
+  // writes back the same storage_path) is what fires
+  // item_images_set_updated_at (migration 20260910150000), advancing
+  // updated_at so the public cover URL's `?v=` cache-busting param
+  // (src/lib/queries/items.ts) actually changes on every replace. Before
+  // #38, this branch was a no-op -- fine while covers were served via
+  // fresh signed URLs on every request, but wrong now that the URL is
+  // meant to be cached long-lived. Either branch keeps a replace at
+  // exactly one item_images row with is_cover=true, never zero, never two.
   const { data: existingCover } = await supabase
     .from("item_images")
     .select("id")
@@ -118,7 +125,17 @@ export async function uploadCoverAction(
     .eq("is_cover", true)
     .maybeSingle();
 
-  if (!existingCover) {
+  if (existingCover) {
+    const { error: updateError } = await supabase
+      .from("item_images")
+      .update({ storage_path: storagePath })
+      .eq("id", existingCover.id);
+    if (updateError) {
+      return {
+        error: "Cover image uploaded, but saving it failed. Please try again.",
+      };
+    }
+  } else {
     const { error: insertError } = await supabase.from("item_images").insert({
       item_id: itemId,
       storage_path: storagePath,
@@ -134,7 +151,8 @@ export async function uploadCoverAction(
   // Same "redirect back to the same detail route" pattern updateItemAction
   // uses to force a fresh server re-render -- getItemDetail/getLibraryItems
   // (lib/queries/items.ts) already resolve coverUrl from whichever
-  // item_images row has is_cover=true via a signed URL, so the new cover
+  // item_images row has is_cover=true via a public URL carrying that row's
+  // updated_at as a `?v=` cache-busting param (issue #38), so the new cover
   // becomes visible on both the detail page and the category Card view
   // automatically, with no other read-side change needed.
   redirect(`/${category.slug}/${itemId}`);

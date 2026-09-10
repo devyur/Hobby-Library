@@ -65,7 +65,22 @@ function fakeSupabase(options: {
 
   const rpcMock = vi.fn().mockResolvedValue(options.rpcResult ?? { data: [], error: null });
 
-  return { from: fromMock, rpc: rpcMock, itemsQuery, itemTagsQuery };
+  // getPublicUrl() is synchronous and, unlike createSignedUrl(), never
+  // errors -- issue #38's public `covers` bucket resolution.
+  const getPublicUrlMock = vi.fn((path: string) => ({
+    data: { publicUrl: `https://fake.supabase.co/storage/v1/object/public/covers/${path}` },
+  }));
+  const storageFromMock = vi.fn(() => ({ getPublicUrl: getPublicUrlMock }));
+
+  return {
+    from: fromMock,
+    rpc: rpcMock,
+    itemsQuery,
+    itemTagsQuery,
+    storage: { from: storageFromMock },
+    getPublicUrlMock,
+    storageFromMock,
+  };
 }
 
 describe("getLibraryItems", () => {
@@ -336,5 +351,77 @@ describe("getLibraryItems sort", () => {
     expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_status_rank", {
       ascending: true,
     });
+  });
+});
+
+// Unit coverage for cover URL resolution (issue #38): the `covers` bucket
+// is public, so getLibraryItems/getItemDetail resolve coverUrl via
+// getPublicUrl() (synchronous, never errors) instead of createSignedUrl(),
+// with a `?v=` cache-busting param sourced from item_images.updated_at.
+// Live verification that the bucket is genuinely public and that the
+// `?v=` value actually changes bytes-for-bytes on a replace is
+// e2e/cover-upload.spec.ts's/a live-fetch job's concern, not this mocked
+// unit -- this only asserts the URL-building logic itself.
+describe("getLibraryItems cover URL resolution", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("resolves coverUrl via getPublicUrl() against the cover row's storage_path, appending ?v=<updated_at as epoch ms>", async () => {
+    const updatedAt = "2026-09-10T12:00:00.000Z";
+    const supabase = fakeSupabase({
+      itemsResult: {
+        data: [
+          {
+            id: "item-1",
+            title: "Portal 2",
+            status: "planned",
+            rating: null,
+            priority: null,
+            subtypes: null,
+            item_tags: [],
+            item_images: [
+              { storage_path: "user-1/item-1/cover", is_cover: true, updated_at: updatedAt },
+            ],
+          },
+        ],
+        error: null,
+      },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getLibraryItems("cat-1");
+
+    expect(supabase.storageFromMock).toHaveBeenCalledWith("covers");
+    expect(supabase.getPublicUrlMock).toHaveBeenCalledWith("user-1/item-1/cover");
+    expect(result[0].coverUrl).toBe(
+      `https://fake.supabase.co/storage/v1/object/public/covers/user-1/item-1/cover?v=${new Date(updatedAt).getTime()}`,
+    );
+  });
+
+  it("with no is_cover=true row, coverUrl is null and getPublicUrl is never called", async () => {
+    const supabase = fakeSupabase({
+      itemsResult: {
+        data: [
+          {
+            id: "item-1",
+            title: "No Cover Item",
+            status: "planned",
+            rating: null,
+            priority: null,
+            subtypes: null,
+            item_tags: [],
+            item_images: [],
+          },
+        ],
+        error: null,
+      },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getLibraryItems("cat-1");
+
+    expect(result[0].coverUrl).toBeNull();
+    expect(supabase.getPublicUrlMock).not.toHaveBeenCalled();
   });
 });

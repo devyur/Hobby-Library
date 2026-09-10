@@ -1,14 +1,14 @@
 // Generated types for public schema.
 //
 // Provenance note (issue #7, re-generated for issue #8, re-confirmed for
-// issue #17, re-confirmed for issue #18, re-generated for issue #22): this
-// sandbox has neither Docker/Podman (required by `supabase gen types
-// typescript --db-url`, which spins up a local Postgres container to
-// introspect) nor a non-interactive Supabase access token (required by
-// `supabase gen types typescript --linked`/`--project-id`, which calls the
-// Management API -- `supabase login` needs an interactive browser). Both
-// re-confirmed absent for #22 too, matching the exact failure documented in
-// #7/#8/#17/#18.
+// issue #17, re-confirmed for issue #18, re-generated for issue #22,
+// re-generated for issue #38): this sandbox has neither Docker/Podman
+// (required by `supabase gen types typescript --db-url`, which spins up a
+// local Postgres container to introspect) nor a non-interactive Supabase
+// access token (required by `supabase gen types typescript --linked`/
+// `--project-id`, which calls the Management API -- `supabase login` needs
+// an interactive browser). Both re-confirmed absent for #38 too, matching
+// the exact failure documented in #7/#8/#17/#18/#22.
 //
 // This file is still CLI-generated content, not hand-written: it was
 // produced by running `@supabase/postgrest-typegen` -- the same
@@ -21,13 +21,14 @@
 // only resolves over IPv6, unavailable in this sandbox; the pooler's
 // tenant-routing rejects a wrong-region guess immediately, which is how the
 // right region was found), same connection class used for `db push` in
-// #4-#8/#17/#18/#22. Regenerated for #22's migration (pg_trgm extension +
-// trigram indexes + the new `search_item_ids` function): the `Functions`
-// map below now carries `search_item_ids` (this issue's search RPC) plus
-// `show_limit`/`show_trgm` -- two small helper functions `pg_trgm` itself
-// installs into the `public` schema as a side effect of `create extension
-// pg_trgm` (no schema clause was given, so it landed in the same schema as
-// everything else here, same as every prior migration in this project).
+// #4-#8/#17/#18/#22/#38. Regenerated for #38's migration
+// (20260910150000_make_covers_bucket_public.sql, item_images.updated_at):
+// the `item_images` Row/Insert/Update shapes below now carry `updated_at`.
+// This regen also picked up `item_priority_rank`/`item_status_rank` (added
+// by migration 20260909160000, #24) in the `Functions` map for the first
+// time -- missed by #22's regen (predates #24), not something #38 changed;
+// left in since a full re-introspection reflects the live schema
+// accurately and a hand-trimmed diff would be less honest about that.
 // Regenerate via the real `supabase` CLI once this repo is `supabase
 // link`ed in an environment with Docker or an access token (see AGENTS.md:
 // regenerate after any schema change).
@@ -117,6 +118,7 @@ export type Database = {
           item_id: string
           sort_order: number
           storage_path: string
+          updated_at: string
         }
         Insert: {
           created_at?: string
@@ -125,6 +127,7 @@ export type Database = {
           item_id: string
           sort_order?: number
           storage_path: string
+          updated_at?: string
         }
         Update: {
           created_at?: string
@@ -133,6 +136,7 @@ export type Database = {
           item_id?: string
           sort_order?: number
           storage_path?: string
+          updated_at?: string
         }
         Relationships: [
           {
@@ -408,6 +412,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      item_priority_rank: {
+        Args: { item: Database["public"]["Tables"]["items"]["Row"] }
+        Returns: number
+      }
+      item_status_rank: {
+        Args: { item: Database["public"]["Tables"]["items"]["Row"] }
+        Returns: number
+      }
       search_item_ids: {
         Args: { p_category_id: string; p_search_term: string }
         Returns: {
