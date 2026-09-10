@@ -186,3 +186,23 @@ Description: Discovered while grooming #29 — `plan.md` §23/`database-schema.m
 ## 46. Fix created_at hydration mismatch near local-midnight boundary — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/46)
 Goal: Stop a real React hydration-mismatch error on the item detail page's "Added:" row when the server and viewer disagree on the calendar date near local midnight.
 Description: Discovered and independently reproduced twice by QA while verifying #34's timezone fix for `completed_at`. `created_at`/`deleted_at` are genuine timestamps correctly meant to display in local time (unlike `completed_at`, which needed UTC-forced formatting) — the bug is a rendering-correctness issue (server/client date disagreement near midnight), not a wrong-timezone issue. Likely fix: defer local-time formatting to a client-only render path instead of computing it during SSR.
+
+## 47. Upload cover image from clipboard paste — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/47)
+Goal: Let a user paste an image from their clipboard as an item's cover, not just pick a file.
+Description: Requested by the user testing the live app. A new input path into the existing upload pipeline (#19 validation, #37 resize/WebP) via a `paste` event listener — no new upload/validation logic.
+
+## 48. Always-interactive Notes/Review editing, with empty-state CTAs — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/48)
+Goal: Let a user add/edit Notes and Review independently of the item's main Edit mode, with an inviting empty state instead of nothing when both are blank.
+Description: Requested by the user testing the live app. Brings Notes/Review in line with how Tags already works (always-interactive, no shared Edit/Save gate) — a real architectural change, not a bug fix. The #16 completion nudge's interaction with independently-saved Review needs an explicit decision during grooming.
+
+## 49. Move Trash link from main nav into Settings — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/49)
+Goal: Relocate the Trash entry point out of the main nav into Settings, since it's used infrequently.
+Description: Requested by the user testing the live app. Pure navigation relocation — Trash's own page/functionality is unchanged.
+
+## 50. Per-category Dashboard statistics view — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/50)
+Goal: Let a user drill into one category from the Dashboard to see library/stats/recently-added scoped to just that category, while trends/recommendations/continue stay account-wide.
+Description: Requested by the user testing the live app. #27 deliberately made the Dashboard account-wide by design — this is a genuine new feature needing its own entry-point/routing decision during grooming, not a quick tweak.
+
+## 51. Investigate slow page navigation (3-5s per click) in production — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/51)
+Goal: Diagnose and fix why navigating the live production app takes 3-5s per click.
+Description: Reported by the user testing the live app. Deliberately scoped as investigation-first (profile via real timing data, check Vercel/Supabase region alignment and serverless cold-start behavior, check for unnecessarily sequential queries) rather than a guessed fix, since several independent causes are plausible given the architecture.
