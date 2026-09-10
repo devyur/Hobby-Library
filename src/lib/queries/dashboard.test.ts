@@ -20,7 +20,7 @@ vi.mock("@/lib/queries/categories", () => ({
   getCategories: (...args: unknown[]) => getCategoriesMock(...args),
 }));
 
-const { getDashboardData } = await import("./dashboard");
+const { getDashboardData, getRecommendations } = await import("./dashboard");
 
 function fakeSupabase(itemsResult: { data: unknown[] | null; error: { message: string } | null }) {
   const isMock = vi.fn().mockResolvedValue(itemsResult);
@@ -303,6 +303,325 @@ describe("getDashboardData", () => {
 
     const games = trends.find((t) => t.categoryId === "cat-games");
     expect(games?.months).toEqual([]);
+  });
+});
+
+// Unit coverage for getRecommendations (issue #28) -- mocks the Supabase
+// client with one independent "thenable" fake query builder per
+// `.from("items")` call, same chainable-mock pattern items.test.ts already
+// uses for getLibraryItems' multi-step chain. getRecommendations() issues
+// its four section queries concurrently via Promise.all, but since each
+// section function only awaits *after* fully building its query chain
+// synchronously, the `.from("items")` calls happen in a deterministic order
+// every run: 1) high-rated Planned, 2) high-priority Planned, 3) random
+// Planned's count-only query, 4) Continue/Ongoing, and -- only once the
+// count resolves -- 5) random Planned's range-based row fetch. `results`
+// below is consumed in that exact order.
+interface FakeRecommendationsQuery
+  extends PromiseLike<{
+    data?: unknown[] | null;
+    count?: number | null;
+    error?: { message: string } | null;
+  }> {
+  select: ReturnType<typeof vi.fn>;
+  eq: ReturnType<typeof vi.fn>;
+  is: ReturnType<typeof vi.fn>;
+  gte: ReturnType<typeof vi.fn>;
+  order: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
+  range: ReturnType<typeof vi.fn>;
+}
+
+function fakeRecommendationsSupabase(options: {
+  user?: { id: string } | null;
+  results?: Array<{ data?: unknown[] | null; count?: number | null; error?: { message: string } | null }>;
+}) {
+  const results = options.results ?? [];
+  let callIndex = 0;
+  const builders: FakeRecommendationsQuery[] = [];
+
+  function makeBuilder(): FakeRecommendationsQuery {
+    const result = results[callIndex] ?? { data: [], error: null };
+    callIndex += 1;
+
+    const builder: FakeRecommendationsQuery = {
+      select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      is: vi.fn(() => builder),
+      gte: vi.fn(() => builder),
+      order: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      range: vi.fn(() => builder),
+      then: (onFulfilled, onRejected) => Promise.resolve(result).then(onFulfilled, onRejected),
+    };
+    return builder;
+  }
+
+  const fromMock = vi.fn((table: string) => {
+    if (table !== "items") throw new Error(`Unexpected table in test: ${table}`);
+    const builder = makeBuilder();
+    builders.push(builder);
+    return builder;
+  });
+
+  const createSignedUrlMock = vi
+    .fn()
+    .mockResolvedValue({ data: { signedUrl: "https://signed.example/cover.jpg" } });
+  const storageFromMock = vi.fn(() => ({ createSignedUrl: createSignedUrlMock }));
+
+  return {
+    from: fromMock,
+    storage: { from: storageFromMock },
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    builders,
+    createSignedUrlMock,
+    storageFromMock,
+  };
+}
+
+function recommendationRow(overrides: {
+  id?: string;
+  title?: string;
+  status?: string;
+  rating?: number | null;
+  priority?: string | null;
+  categorySlug?: string;
+  categoryName?: string;
+  subtypeName?: string;
+  tags?: string[];
+  hasCover?: boolean;
+}) {
+  return {
+    id: overrides.id ?? "item-1",
+    title: overrides.title ?? "Some Item",
+    status: overrides.status ?? "planned",
+    rating: overrides.rating === undefined ? null : overrides.rating,
+    priority: overrides.priority === undefined ? null : overrides.priority,
+    categories: { slug: overrides.categorySlug ?? "books", name: overrides.categoryName ?? "Books" },
+    subtypes: { name: overrides.subtypeName ?? "Fiction" },
+    item_tags: (overrides.tags ?? []).map((name) => ({ tags: { name } })),
+    item_images: overrides.hasCover
+      ? [{ storage_path: `${overrides.id ?? "item-1"}/cover`, is_cover: true }]
+      : [],
+  };
+}
+
+// Four empty, error-free results in the deterministic call order documented
+// above -- the baseline every test below overrides pieces of.
+function emptyResults() {
+  return [
+    { data: [], error: null }, // high-rated Planned
+    { data: [], error: null }, // high-priority Planned
+    { count: 0, error: null }, // random Planned count
+    { data: [], error: null }, // Continue/Ongoing
+  ];
+}
+
+describe("getRecommendations", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("returns all-empty recommendations without querying items when unauthenticated", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result).toEqual({
+      highRatedPlanned: [],
+      highPriorityPlanned: [],
+      randomPlanned: null,
+      continueOngoing: [],
+    });
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("scopes every section's query to the signed-in user_id and excludes soft-deleted items", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getRecommendations();
+
+    expect(supabase.builders).toHaveLength(4);
+    for (const builder of supabase.builders) {
+      expect(builder.eq).toHaveBeenCalledWith("user_id", "user-1");
+      expect(builder.is).toHaveBeenCalledWith("deleted_at", null);
+    }
+  });
+
+  it("high-rated Planned: filters status=planned and rating >= 8, ordered rating desc then created_at desc, capped at 5", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getRecommendations();
+
+    const builder = supabase.builders[0];
+    expect(builder.eq).toHaveBeenCalledWith("status", "planned");
+    expect(builder.gte).toHaveBeenCalledWith("rating", 8);
+    expect(builder.order).toHaveBeenNthCalledWith(1, "rating", { ascending: false });
+    expect(builder.order).toHaveBeenNthCalledWith(2, "created_at", { ascending: false });
+    expect(builder.limit).toHaveBeenCalledWith(5);
+  });
+
+  it("high-priority Planned: filters status=planned and priority=high (no rating threshold), ordered created_at desc, capped at 5", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getRecommendations();
+
+    const builder = supabase.builders[1];
+    expect(builder.eq).toHaveBeenCalledWith("status", "planned");
+    expect(builder.eq).toHaveBeenCalledWith("priority", "high");
+    expect(builder.gte).not.toHaveBeenCalled();
+    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builder.limit).toHaveBeenCalledWith(5);
+  });
+
+  it("Continue: filters status=ongoing only (no rating/priority filter), ordered created_at desc, capped at 5", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getRecommendations();
+
+    const builder = supabase.builders[3];
+    expect(builder.eq).toHaveBeenCalledWith("status", "ongoing");
+    expect(builder.gte).not.toHaveBeenCalled();
+    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builder.limit).toHaveBeenCalledWith(5);
+  });
+
+  it("random Planned: counts Planned items, then range-fetches exactly one row at a JS-computed random offset", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.5); // floor(0.5 * 10) = 5
+    try {
+      const supabase = fakeRecommendationsSupabase({
+        user: { id: "user-1" },
+        results: [
+          { data: [], error: null },
+          { data: [], error: null },
+          { count: 10, error: null },
+          { data: [], error: null },
+          { data: [recommendationRow({ id: "random-item" })], error: null },
+        ],
+      });
+      createClientMock.mockResolvedValue(supabase);
+
+      const result = await getRecommendations();
+
+      expect(supabase.builders).toHaveLength(5);
+      const countBuilder = supabase.builders[2];
+      expect(countBuilder.eq).toHaveBeenCalledWith("status", "planned");
+      const rangeBuilder = supabase.builders[4];
+      expect(rangeBuilder.range).toHaveBeenCalledWith(5, 5);
+      expect(result.randomPlanned?.id).toBe("random-item");
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("random Planned: is null, with no range query issued, when the account has zero Planned items", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result.randomPlanned).toBeNull();
+    expect(supabase.builders).toHaveLength(4);
+  });
+
+  it("random Planned: is null (not a thrown error) when the count query itself errors", async () => {
+    const supabase = fakeRecommendationsSupabase({
+      user: { id: "user-1" },
+      results: [
+        { data: [], error: null },
+        { data: [], error: null },
+        { count: null, error: { message: "boom" } },
+        { data: [], error: null },
+      ],
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result.randomPlanned).toBeNull();
+  });
+
+  it("normalizes embedded category/subtype/tags and resolves a signed cover URL from the private covers bucket", async () => {
+    const supabase = fakeRecommendationsSupabase({
+      user: { id: "user-1" },
+      results: [
+        {
+          data: [
+            recommendationRow({
+              id: "item-1",
+              title: "Dune",
+              status: "planned",
+              rating: 9,
+              priority: "high",
+              categorySlug: "books",
+              categoryName: "Books",
+              subtypeName: "Sci-Fi",
+              tags: ["space", "epic"],
+              hasCover: true,
+            }),
+          ],
+          error: null,
+        },
+        { data: [], error: null },
+        { count: 0, error: null },
+        { data: [], error: null },
+      ],
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result.highRatedPlanned).toEqual([
+      {
+        id: "item-1",
+        title: "Dune",
+        status: "planned",
+        rating: 9,
+        priority: "high",
+        categorySlug: "books",
+        categoryName: "Books",
+        subtypeName: "Sci-Fi",
+        tags: ["space", "epic"],
+        coverUrl: "https://signed.example/cover.jpg",
+      },
+    ]);
+    expect(supabase.storageFromMock).toHaveBeenCalledWith("covers");
+    expect(supabase.createSignedUrlMock).toHaveBeenCalledWith("item-1/cover", 60 * 60);
+  });
+
+  it("a section with no matching rows contributes an empty array, not undefined/null", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result.highRatedPlanned).toEqual([]);
+    expect(result.highPriorityPlanned).toEqual([]);
+    expect(result.continueOngoing).toEqual([]);
+  });
+
+  it("returns an empty list for a section (not a thrown error) when its own query errors, independent of the other sections", async () => {
+    const supabase = fakeRecommendationsSupabase({
+      user: { id: "user-1" },
+      results: [
+        { data: null, error: { message: "boom" } }, // high-rated Planned errors
+        { data: [recommendationRow({ id: "ok-priority" })], error: null },
+        { count: 0, error: null },
+        { data: [recommendationRow({ id: "ok-ongoing", status: "ongoing" })], error: null },
+      ],
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRecommendations();
+
+    expect(result.highRatedPlanned).toEqual([]);
+    expect(result.highPriorityPlanned).toHaveLength(1);
+    expect(result.continueOngoing).toHaveLength(1);
   });
 });
 

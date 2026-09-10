@@ -2,20 +2,20 @@ import { redirect } from "next/navigation";
 
 import { CompletionTrends } from "@/components/dashboard/CompletionTrends";
 import { LibraryStats } from "@/components/dashboard/LibraryStats";
+import { RecommendationsSection } from "@/components/dashboard/RecommendationsSection";
 import { getDashboardData } from "@/lib/queries/dashboard";
 import { createClient } from "@/lib/supabase/server";
 
-// Dashboard (issue #27, folding in #43's completion-trend charts) --
-// replaces #9/#10's placeholder stub. Account-wide (all categories
-// combined): the seven library-wide stats render via <LibraryStats />
-// (src/components/dashboard/LibraryStats.tsx), the per-category monthly
-// completion charts via <CompletionTrends /> (.../CompletionTrends.tsx),
-// both fed from one combined read, getDashboardData() (lib/queries/
-// dashboard.ts). #28's Recommendations section ("Continue / Pick
-// something") is a separate, not-yet-built piece -- the commented
-// insertion point below is exactly where it composes in, per this issue's
-// own file-boundary Constraints; #28 must not touch this file's other
-// content, and this issue must not add any recommendations UI/stub.
+// Dashboard (issue #27, folding in #43's completion-trend charts; #28 adds
+// the Recommendations block below) -- replaces #9/#10's placeholder stub.
+// Account-wide (all categories combined): the seven library-wide stats
+// render via <LibraryStats /> (src/components/dashboard/LibraryStats.tsx),
+// the per-category monthly completion charts via <CompletionTrends />
+// (.../CompletionTrends.tsx), both fed from one combined read,
+// getDashboardData() (lib/queries/dashboard.ts). <RecommendationsSection />
+// (.../RecommendationsSection.tsx) is self-contained -- it fetches its own
+// data via getRecommendations() (also lib/queries/dashboard.ts) rather than
+// taking props from the two components above.
 //
 // middleware.ts already redirects unauthenticated requests to /login before
 // this ever renders, so the `if (!user)` branch below is a defensive
@@ -38,7 +38,7 @@ export default async function DashboardPage() {
       <h1 className="text-lg font-semibold text-text-primary">Dashboard</h1>
       <LibraryStats stats={stats} />
       <CompletionTrends trends={trends} />
-      {/* Recommendations section - #28 */}
+      <RecommendationsSection />
     </div>
   );
 }
