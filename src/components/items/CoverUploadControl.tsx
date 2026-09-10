@@ -7,6 +7,7 @@ import { CoverThumbnail } from "@/components/items/CoverThumbnail";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { removeCoverAction, uploadCoverAction } from "@/lib/actions/covers";
+import { resizeCoverImage } from "@/lib/images/resizeCoverImage";
 import {
   COVER_SIZE_ERROR,
   COVER_TYPE_ERROR,
@@ -81,22 +82,43 @@ export function CoverUploadControl({
 
   const busy = isPending || isRemoving;
 
-  function handleChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  // Resizing (issue #37) is async, but the input/form this reads from are
+  // real DOM nodes captured up front (`input`), not React's SyntheticEvent
+  // itself -- safe to keep using after the `await`. On success the resized
+  // File replaces the input's FileList via a DataTransfer (a file input's
+  // `.files` can't be assigned a plain array/File directly) *before*
+  // requestSubmit(), so uploadCoverAction's `formData.get("cover")` read
+  // side never has to know resizing happened. If resizeCoverImage's own
+  // try/catch can't produce a resized file, it already resolves to the
+  // original `file` unchanged (logged via console.warn) -- that's the
+  // fallback path from #37's acceptance criteria, and it needs no special
+  // handling here since `resized === file` just skips the DataTransfer swap
+  // and submits the original, already pre-checked above.
+  async function handleChange(event: ChangeEvent<HTMLInputElement>) {
+    const input = event.target;
+    const file = input.files?.[0];
     if (!file) return;
 
     if (!isAllowedCoverMimeType(file.type)) {
       setClientError(COVER_TYPE_ERROR);
-      event.target.value = "";
+      input.value = "";
       return;
     }
     if (file.size > MAX_COVER_SIZE_BYTES) {
       setClientError(COVER_SIZE_ERROR);
-      event.target.value = "";
+      input.value = "";
       return;
     }
 
     setClientError(null);
+
+    const resized = await resizeCoverImage(file);
+    if (resized !== file) {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(resized);
+      input.files = dataTransfer.files;
+    }
+
     formRef.current?.requestSubmit();
   }
 

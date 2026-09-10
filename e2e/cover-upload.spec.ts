@@ -183,6 +183,20 @@ test.describe("Cover image upload (issue #19)", () => {
       await expect(coverImg).toBeVisible();
       const oldSrc = await coverImg.getAttribute("src");
 
+      // Downloaded once before replacing too -- issue #37's client-side
+      // resize now re-encodes every upload to WebP, so the stored bytes are
+      // never byte-identical to either raw PNG fixture; the real assertion
+      // this test needs is that the *replace* actually changed the stored
+      // object (not the two PNGs' exact bytes, which src/lib/images/
+      // resizeCoverImage.test.ts and e2e/cover-resize.spec.ts already cover).
+      const { data: beforeDownload, error: beforeDownloadError } = await user.storage
+        .from("covers")
+        .download(storagePath);
+      if (beforeDownloadError || !beforeDownload) {
+        throw beforeDownloadError ?? new Error("download failed");
+      }
+      const beforeBytes = Buffer.from(await beforeDownload.arrayBuffer());
+
       await page
         .getByLabel("Cover image", { exact: true })
         .setInputFiles({ name: "cover2.png", mimeType: "image/png", buffer: ONE_PIXEL_PNG_BLUE });
@@ -201,15 +215,14 @@ test.describe("Cover image upload (issue #19)", () => {
       expect(images?.[0].id).toBe(firstImage.id);
       expect(images?.[0].storage_path).toBe(storagePath);
 
-      // The storage object itself was actually overwritten with the new
-      // bytes -- not skipped, not a second object under the same folder.
+      // The storage object itself was actually overwritten with new bytes
+      // -- not skipped, not a second object under the same folder.
       const { data: downloaded, error: downloadError } = await user.storage
         .from("covers")
         .download(storagePath);
       if (downloadError || !downloaded) throw downloadError ?? new Error("download failed");
       const downloadedBytes = Buffer.from(await downloaded.arrayBuffer());
-      expect(downloadedBytes.equals(ONE_PIXEL_PNG_BLUE)).toBe(true);
-      expect(downloadedBytes.equals(ONE_PIXEL_PNG_RED)).toBe(false);
+      expect(downloadedBytes.equals(beforeBytes)).toBe(false);
 
       const { data: listing } = await user.storage.from("covers").list(`${userId}/${itemId}`);
       expect(listing).toHaveLength(1);
