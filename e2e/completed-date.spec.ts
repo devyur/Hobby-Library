@@ -380,3 +380,76 @@ test.describe("Manually set/edit completed_at (issue #34)", () => {
     }
   });
 });
+
+// QA's repro for the FAIL on the first pass of #34: the read-only
+// "Completed:" row used formatDate(), which renders via Intl.DateTimeFormat
+// with no timeZone override -- i.e. in the *viewer's* local browser
+// timezone, not UTC. Since completed_at is stored as UTC midnight, any
+// viewer in a timezone behind UTC saw the date roll back a calendar day
+// (plus a React hydration mismatch, server vs. client disagreeing on the
+// rendered date). Fixed by src/lib/format.ts's new formatDateOnly(), which
+// forces timeZone: "UTC", used at this one call site in ItemEditForm.tsx.
+// These two tests reproduce QA's exact repro (America/Los_Angeles, behind
+// UTC) and its mirror (Asia/Tokyo, ahead of UTC) to prove the fix doesn't
+// just shift the bug the other direction.
+for (const { zone, label } of [
+  { zone: "America/Los_Angeles", label: "behind UTC" },
+  { zone: "Asia/Tokyo", label: "ahead of UTC" },
+]) {
+  test.describe(`Completed date display is timezone-independent -- ${zone} (${label})`, () => {
+    test.use({ timezoneId: zone });
+
+    test(`viewer in ${zone} sees the correct stored calendar date, no off-by-one, no hydration mismatch`, async ({
+      page,
+    }) => {
+      test.setTimeout(60_000);
+      const email = randomTestEmail(`completedat-tz-${zone.split("/")[1].toLowerCase()}`);
+      const admin = createSupabaseAdminClient();
+      let userId: string | null = null;
+
+      const consoleErrors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") consoleErrors.push(msg.text());
+      });
+      const pageErrors: string[] = [];
+      page.on("pageerror", (err) => pageErrors.push(err.message));
+
+      try {
+        await registerViaUI(page, email);
+        userId = await getUserIdByEmail(admin, email);
+        if (!userId) throw new Error("test user id not found after registration");
+        const user = await createSupabaseUserClient(email, TEST_PASSWORD);
+
+        // Same value QA reproduced with: picking "2022-07-04" in the field
+        // stores this exact UTC-midnight instant.
+        const { itemId, categorySlug } = await insertGamesRpgItem(user, userId, {
+          title: `TZ Display Test (${zone})`,
+          status: "completed",
+          completedAt: "2022-07-04T00:00:00.000Z",
+        });
+
+        consoleErrors.length = 0;
+        pageErrors.length = 0;
+        await page.goto(`/${categorySlug}/${itemId}`);
+
+        // Correct calendar date shown regardless of viewer timezone -- not
+        // shifted a day earlier (behind UTC) or later (ahead of UTC).
+        await expect(page.getByText("Jul 4, 2022")).toBeVisible();
+        await expect(page.getByText("Jul 3, 2022")).toHaveCount(0);
+        await expect(page.getByText("Jul 5, 2022")).toHaveCount(0);
+
+        // No React hydration mismatch: server and client now agree, since
+        // formatDateOnly's UTC override is independent of either side's
+        // local timezone.
+        const hydrationIssues = [...consoleErrors, ...pageErrors].filter((text) =>
+          /hydrat/i.test(text),
+        );
+        expect(hydrationIssues).toEqual([]);
+
+        await user.auth.signOut();
+      } finally {
+        if (userId) await admin.auth.admin.deleteUser(userId);
+      }
+    });
+  });
+}

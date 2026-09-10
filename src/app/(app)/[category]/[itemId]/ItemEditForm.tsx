@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDateOnly } from "@/lib/format";
 import { deleteItemAction, updateItemAction } from "@/lib/actions/items";
 import type { Database } from "@/lib/supabase/types";
 import {
@@ -316,7 +316,7 @@ export function ItemEditFormProvider({
           {completedAt ? (
             <div className="flex gap-1">
               <dt className="font-medium text-text-primary">Completed:</dt>
-              <dd>{formatDate(completedAt)}</dd>
+              <dd>{formatDateOnly(completedAt)}</dd>
             </div>
           ) : null}
         </dl>
