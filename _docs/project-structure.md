@@ -12,7 +12,7 @@ Target: Next.js (App Router) + TypeScript + Tailwind + Supabase. No code yet —
 
 **Decision:** the category library view is a **dynamic route** `[category]/`, not four separate folders (`games/`, `books/`, `audio/`, `video/`). This follows directly from the earlier decision that `categories` is a DB-driven table, not a fixed set — the route, the nav, and the page all resolve the category from the database at request time, so adding "Journeys" or "Sport" later needs zero new routes or files.
 
-**Decision:** reads happen directly in Server Components (React Server Components query Supabase server-side, no client-side fetch needed for initial page load); writes go through **Server Actions**, not a separate REST/GraphQL API layer. This avoids hand-building an API layer for a single-consumer app — it's the standard low-ceremony pattern for Next.js + Supabase and directly serves priority #1 in the plan ("simple development"). An `app/api/` route is kept only for the one case that doesn't fit a Server Action well: the JSON/CSV **export download** endpoint.
+**Decision:** reads happen directly in Server Components (React Server Components query Supabase server-side, no client-side fetch needed for initial page load); writes go through **Server Actions**, not a separate REST/GraphQL API layer. This avoids hand-building an API layer for a single-consumer app — it's the standard low-ceremony pattern for Next.js + Supabase and directly serves priority #1 in the plan ("simple development"). An `app/api/` route is kept only for the one case that doesn't fit a Server Action well: the JSON **export download** endpoint (#29; CSV was split out as a deferred [#45](https://github.com/devyur/Hobby-Library/issues/45), not built). Import (#30), despite also handling a file, is a Server Action — it's an upload via `<form>`/`FormData`, which Server Actions handle natively, not a download.
 
 ---
 
@@ -27,9 +27,10 @@ Target: Next.js (App Router) + TypeScript + Tailwind + Supabase. No code yet —
 **Decision:** split between generic reusable primitives and domain-specific components, rather than one flat folder or one folder per page:
 - `components/ui/` — generic primitives (Button, Card, Modal, Input, Badge…). Sourced from **shadcn/ui** (Tailwind-based, copied into the repo rather than pulled in as an opaque dependency, so components stay fully editable and there's no library lock-in).
 - `components/items/` — item-specific UI (ItemCard, ItemListRow, ItemForm, StatusBadge, RatingStars…)
-- `components/dashboard/` — stat tiles, charts
-- `components/lists/` — custom list UI
+- `components/dashboard/` — stat tiles, charts (`LibraryStats.tsx`, `CompletionTrends.tsx`, `RecommendationsSection.tsx`, from #27/#28)
+- `components/lists/` — custom list UI (#26)
 - `components/nav/` — the main nav shell, which renders its tabs **dynamically from the `categories` table** (per the earlier decision)
+- `components/settings/` — Settings-page-specific UI (`ImportLibraryForm.tsx`, from #30)
 
 Why this split and not "one folder per route": several components (ItemCard, StatusBadge) are reused across the dashboard, category views, and list views — domain folders keep them discoverable without duplicating them per page.
 
@@ -40,8 +41,8 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 - `lib/supabase/client.ts` — browser Supabase client
 - `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
 - `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB. Regenerating via the literal CLI requires either Docker/Podman on `PATH` (for `--db-url`) or a Supabase personal access token via `SUPABASE_ACCESS_TOKEN` (for `--linked`/`--project-id`). In an environment with neither (e.g. a Docker-less sandbox with no PAT configured), `@supabase/postgrest-typegen` — the same introspection/codegen engine the CLI wraps — run directly against the live schema is the accepted fallback, provided the resulting file's header documents which tool generated it and why the literal CLI wasn't used. See [#7](https://github.com/devyur/Hobby-Library/issues/7) for the decision record.
-- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, `trash.ts`, plus `lists.ts` once #26 lands)
-- `lib/queries/` — reusable read queries (`getItems`, `getDashboardStats`, …)
+- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, `trash.ts`, `lists.ts`, `import.ts`)
+- `lib/queries/` — reusable read queries (`items.ts`, `dashboard.ts`, `export.ts`, `trash.ts`, `lists.ts`, `categories.ts`, `subtypes.ts`, `tags.ts`)
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
 - `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
 
@@ -86,7 +87,7 @@ Hobby Library/
 │   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
 │   │   │   ├── layout.tsx              # nav shell (#10)
-│   │   │   ├── dashboard/page.tsx      # stats/recommendations pending #27/#28
+│   │   │   ├── dashboard/page.tsx      # stats (#27) + completion trends (#27/#43) + recommendations (#28)
 │   │   │   ├── add/
 │   │   │   │   ├── page.tsx            # Full Add form (#14)
 │   │   │   │   └── AddItemForm.tsx
@@ -99,12 +100,12 @@ Hobby Library/
 │   │   │   │       ├── page.tsx          # item detail (#13) + inline edit of status/rating/priority/notes/review (#16) + Delete (#25); tags (#17), subtype (#18), cover (#19), links (#20), attachments (#21) each have their own always-interactive editor rendered alongside it
 │   │   │   │       └── ItemEditForm.tsx
 │   │   │   ├── lists/
-│   │   │   │   ├── page.tsx            # #10: placeholder until #26
-│   │   │   │   └── [listId]/page.tsx
+│   │   │   │   ├── page.tsx            # create/rename/delete lists (#26)
+│   │   │   │   └── [listId]/page.tsx   # cross-category add/remove item picker (#26)
 │   │   │   ├── trash/page.tsx          # Restore + Permanent Delete (#25)
-│   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11)
+│   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11) + Export/Import (#29/#30)
 │   │   ├── api/
-│   │   │   └── export/route.ts
+│   │   │   └── export/route.ts         # GET, JSON download (#29) — the one Route Handler, per §1
 │   │   ├── layout.tsx                  # root layout
 │   │   └── globals.css
 │   ├── components/
@@ -124,6 +125,9 @@ Hobby Library/
 │   │   └── constants.ts
 │   └── middleware.ts
 ├── public/
+├── .github/
+│   └── workflows/
+│       └── supabase-keepalive.yml  # scheduled ping preventing free-tier Supabase pause (#32)
 ├── .env.example
 ├── next.config.ts
 ├── tsconfig.json
