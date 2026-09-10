@@ -1,6 +1,8 @@
 -- Grant service_role access to app tables (issue #33): every prior migration
--- since #3 only ever `grant`s to `authenticated` (and, for the three global
--- lookup tables, `anon`/`authenticated` `select`), never to `service_role`.
+-- since #3 only ever `grant`s to `authenticated` (with varying scope per
+-- table -- e.g. `select` only on `categories`; `select, insert` on the other
+-- two lookup tables, `subtypes`/`tags`; full CRUD on the rest), never to
+-- `anon` or to `service_role`.
 -- Confirmed live: a service_role-authenticated PostgREST request against
 -- categories/items/user_preferences all returned `permission denied` --
 -- Postgres's table-level `grant` is a separate access gate from RLS, and
@@ -11,8 +13,8 @@
 -- than full CRUD -- service_role already bypasses RLS once it holds any
 -- grant at all, so a narrower per-table grant here buys no real security,
 -- only a future avoidable `permission denied` for an admin/export/seed
--- script. Additive only: no change to existing `anon`/`authenticated`
--- grants or RLS policies.
+-- script. Additive only: no change to existing `authenticated` grants or
+-- RLS policies.
 --
 -- Storage buckets (`covers`, `attachments`) need no equivalent change --
 -- Storage-API requests are authorized by the Storage server itself, a
