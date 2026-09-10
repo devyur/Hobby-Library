@@ -8,10 +8,11 @@ import type { CategoryTrend, MonthlyCompletionCount } from "@/lib/queries/dashbo
 // Constraints (independently reviewable despite landing in the same
 // issue).
 //
-// `completed_at` is unwritable anywhere in the shipped app today (#34 is
-// still open) -- every category is expected to render its empty state on
-// every real account until #34 ships. That's the correct, intended state
-// here, not a bug.
+// `completed_at` is now writable via the item detail page's edit form
+// (issue #34) -- a category still renders its empty state whenever the
+// user has no completed_at values in it (a brand-new account, or one that
+// hasn't completed anything in that category yet), which remains correct,
+// not a bug.
 export function CompletionTrends({ trends }: { trends: CategoryTrend[] }) {
   return (
     <section className="flex flex-col gap-3">

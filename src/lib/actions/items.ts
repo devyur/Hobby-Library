@@ -323,14 +323,13 @@ export async function quickAddItemAction(
 }
 
 // Server Action backing ItemEditForm.tsx (issue #16; subtype editing added
-// in #18), bound to a specific item id via `.bind(null, itemId)` in the
-// client component -- so its real signature as passed to useActionState is
-// (prevState, formData), same shape as createItemAction/quickAddItemAction
-// above. status, rating, priority, subtype_id, notes, and review are read
-// from the client -- title and category_id remain permanently out of scope
-// for editing (see the issue's Out of scope section) and never appear in the
-// update payload, and completed_at is never written here either (out of
-// scope, filed as #34) -- it stays whatever it already was.
+// in #18; completed_at added in #34), bound to a specific item id via
+// `.bind(null, itemId)` in the client component -- so its real signature as
+// passed to useActionState is (prevState, formData), same shape as
+// createItemAction/quickAddItemAction above. status, rating, priority,
+// subtype_id, notes, review, and completed_at are read from the client --
+// title and category_id remain permanently out of scope for editing (see
+// the issue's Out of scope section) and never appear in the update payload.
 //
 // Same client-pre-check + server-re-check shape as createItemAction: a
 // JS-disabled or hand-crafted direct submission is rejected the same way.
@@ -342,14 +341,15 @@ export async function quickAddItemAction(
 // plain "not found" formError a raw RLS-filtered zero-row result would
 // produce anyway, never a distinguishable Postgres/RLS error.
 //
-// Explicit-null clearing: parsed.data.rating/priority/notes/review are
-// `T | undefined` (the Zod schema's emptyToUndefined preprocessing), and
-// `value ?? null` below turns each `undefined` into an explicit `null` in
-// the object literal -- the key is always present in the update payload,
-// never omitted. This matters because Supabase's `.update()` only touches
-// keys present in its argument object; an omitted (or `undefined`-valued,
-// which JSON.stringify drops entirely) key leaves the existing DB value
-// untouched instead of clearing it.
+// Explicit-null clearing: parsed.data.rating/priority/notes/review/
+// completedAt are all `T | undefined` (the Zod schema's emptyToUndefined
+// preprocessing), and `value ?? null` below turns each `undefined` into an
+// explicit `null` in the object literal -- the key is always present in the
+// update payload, never omitted. This matters because Supabase's
+// `.update()` only touches keys present in its argument object; an omitted
+// (or `undefined`-valued, which JSON.stringify drops entirely) key leaves
+// the existing DB value untouched instead of clearing it -- same pattern
+// #16 already established, now also covering completed_at (#34).
 export async function updateItemAction(
   itemId: string,
   _prevState: ItemFormState,
@@ -362,6 +362,7 @@ export async function updateItemAction(
     priority: formData.get("priority"),
     notes: formData.get("notes"),
     review: formData.get("review"),
+    completedAt: formData.get("completedAt"),
   });
 
   if (!parsed.success) {
@@ -439,6 +440,12 @@ export async function updateItemAction(
       priority: parsed.data.priority ?? null,
       notes: parsed.data.notes ?? null,
       review: parsed.data.review ?? null,
+      // UTC midnight for the given calendar date (issue #34's Constraints)
+      // -- matches the UTC month-bucketing getDashboardData()/
+      // CompletionTrends.tsx already assume when deriving `month` from
+      // completed_at (row.completed_at.slice(0, 7)), so the browser's local
+      // timezone can never shift which calendar day gets stored.
+      completed_at: parsed.data.completedAt ? `${parsed.data.completedAt}T00:00:00.000Z` : null,
     })
     .eq("id", itemId);
 

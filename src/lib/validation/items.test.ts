@@ -297,4 +297,57 @@ describe("editItemSchema", () => {
     const result = editItemSchema.safeParse(minimumValidEdit({ subtypeId: "not-a-uuid" }));
     expect(result.success).toBe(false);
   });
+
+  // completedAt (issue #34): always optional at the schema level -- the
+  // form always renders it, but leaving it blank is exactly how a user
+  // clears completed_at, same shape as rating/priority/notes/review.
+  describe("completedAt", () => {
+    it("leaves completedAt undefined when the field is empty", () => {
+      const result = editItemSchema.safeParse(minimumValidEdit());
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.completedAt).toBeUndefined();
+      }
+    });
+
+    it("accepts a well-formed YYYY-MM-DD date", () => {
+      const result = editItemSchema.safeParse(minimumValidEdit({ completedAt: "2024-03-15" }));
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.completedAt).toBe("2024-03-15");
+      }
+    });
+
+    it("accepts a completed date earlier than any plausible add date -- no cross-field check exists", () => {
+      const result = editItemSchema.safeParse(minimumValidEdit({ completedAt: "1999-01-01" }));
+      expect(result.success).toBe(true);
+    });
+
+    it.each(["not-a-date", "2024/03/15", "03-15-2024", "2024-3-15", "15-2024-03"])(
+      "rejects a malformed date string %s",
+      (value) => {
+        const result = editItemSchema.safeParse(minimumValidEdit({ completedAt: value }));
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(
+            result.error.issues.some((issue) => issue.path[0] === "completedAt"),
+          ).toBe(true);
+        }
+      },
+    );
+
+    it("rejects a well-shaped but nonexistent calendar date (Feb 30)", () => {
+      const result = editItemSchema.safeParse(minimumValidEdit({ completedAt: "2024-02-30" }));
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts Feb 29 on a leap year and rejects it on a non-leap year", () => {
+      expect(
+        editItemSchema.safeParse(minimumValidEdit({ completedAt: "2024-02-29" })).success,
+      ).toBe(true);
+      expect(
+        editItemSchema.safeParse(minimumValidEdit({ completedAt: "2023-02-29" })).success,
+      ).toBe(false);
+    });
+  });
 });

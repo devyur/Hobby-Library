@@ -269,7 +269,7 @@ describe("updateItemAction", () => {
     expect(supabase.updateMock).not.toHaveBeenCalled();
   });
 
-  it("writes explicit null (not an omitted key) for a cleared rating, priority, notes, and review", async () => {
+  it("writes explicit null (not an omitted key) for a cleared rating, priority, notes, review, and completed date", async () => {
     const supabase = fakeSupabaseForUpdate({
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
@@ -283,8 +283,15 @@ describe("updateItemAction", () => {
         "item-1",
         initialItemFormState,
         // Every clearable field submitted empty -- simulating a save that
-        // clears a previously-set rating/priority/notes/review.
-        editFormData({ status: "ongoing", rating: "", priority: "", notes: "", review: "" }),
+        // clears a previously-set rating/priority/notes/review/completedAt.
+        editFormData({
+          status: "ongoing",
+          rating: "",
+          priority: "",
+          notes: "",
+          review: "",
+          completedAt: "",
+        }),
       ),
     ).rejects.toThrow("REDIRECT:/games/item-1");
 
@@ -297,16 +304,17 @@ describe("updateItemAction", () => {
       priority: null,
       notes: null,
       review: null,
+      completed_at: null,
     });
     // Explicit key presence, not just an equal value -- `{ rating: undefined }`
     // would also satisfy toEqual's rating check but get silently dropped by
     // Supabase's own JSON serialization before ever reaching Postgres.
     expect(Object.keys(payload)).toEqual(
-      expect.arrayContaining(["rating", "priority", "notes", "review"]),
+      expect.arrayContaining(["rating", "priority", "notes", "review", "completed_at"]),
     );
   });
 
-  it("includes the submitted subtype_id but never category_id or completed_at in the update payload, even when status is set to completed", async () => {
+  it("includes the submitted subtype_id but never category_id in the update payload, even when status is set to completed", async () => {
     const supabase = fakeSupabaseForUpdate({
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
@@ -326,7 +334,84 @@ describe("updateItemAction", () => {
     const payload = supabase.updateMock.mock.calls[0][0];
     expect(payload.subtype_id).toBe(VALID_SUBTYPE_ID);
     expect(payload).not.toHaveProperty("category_id");
-    expect(payload).not.toHaveProperty("completed_at");
+  });
+
+  // Issue #34: completed_at is set manually via its own field, never
+  // inferred from status -- these mirror the "explicit null, never omitted"
+  // and "status alone never touches it" acceptance criteria.
+  it("writes completed_at as UTC midnight for the submitted calendar date, regardless of status", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(
+      updateItemAction(
+        "item-1",
+        initialItemFormState,
+        editFormData({ status: "planned", completedAt: "2024-03-15" }),
+      ),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload.completed_at).toBe("2024-03-15T00:00:00.000Z");
+    expect(payload.status).toBe("planned");
+  });
+
+  it("writes explicit null (not an omitted key) when the completed date field is left empty", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(
+      updateItemAction("item-1", initialItemFormState, editFormData({ completedAt: "" })),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload).toHaveProperty("completed_at");
+    expect(payload.completed_at).toBeNull();
+  });
+
+  it("rejects a malformed completed date (tampered input) with a field error, never reaching update", async () => {
+    const result = await updateItemAction(
+      "item-1",
+      initialItemFormState,
+      editFormData({ completedAt: "not-a-date" }),
+    );
+
+    expect(result.fieldErrors.completedAt).toBeDefined();
+    expect(createClientMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a completed date earlier than the add date? -- no, it's explicitly allowed: accepts any well-formed calendar date regardless of createdAt", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    // A backfilled completion date long before this save -- no cross-field
+    // check against created_at exists (issue #34's Out of scope), so this
+    // must succeed exactly like any other valid date.
+    await expect(
+      updateItemAction(
+        "item-1",
+        initialItemFormState,
+        editFormData({ completedAt: "1999-01-01" }),
+      ),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload.completed_at).toBe("1999-01-01T00:00:00.000Z");
   });
 
   it("rejects a subtype that doesn't belong to (or isn't visible within) the item's own category, without ever calling update", async () => {

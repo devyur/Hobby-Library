@@ -102,6 +102,32 @@ export type QuickAddItemInput = z.infer<typeof quickAddItemSchema>;
 // Reuses the same itemStatusValues/priorityLevelValues/emptyToUndefined/
 // nullToEmptyString preprocessing this module already defines for
 // addItemSchema, rather than duplicating them.
+// YYYY-MM-DD, the value shape a native <input type="date"> submits. Used
+// only for the completedAt field below -- issue #34, which stores
+// completed_at as a timestamptz but only ever collects/displays a
+// calendar-day date, converted to/from UTC midnight in
+// items.ts/ItemEditForm.tsx (never a datetime) so the browser's local
+// timezone can't shift which calendar day gets stored.
+const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}$/;
+
+// Rejects both a wrong-shaped string (regex) and a right-shaped-but-
+// nonexistent calendar date like "2024-02-30" -- the naive `new
+// Date("2024-02-30")` a simpler check might use silently rolls that over to
+// March 1 instead of failing, so this reconstructs the date from its parts
+// and checks they round-trip unchanged. Guards the "tampered <input>,
+// JS-disabled direct submission" case the issue calls out -- the native
+// date picker itself never produces an out-of-range value.
+function isValidCalendarDate(value: string): boolean {
+  if (!dateOnlyPattern.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
 export const editItemSchema = z.object({
   status: z.enum(itemStatusValues, { message: "Status is required" }),
 
@@ -124,6 +150,19 @@ export const editItemSchema = z.object({
 
   notes: z.preprocess(emptyToUndefined, z.string().trim().optional()),
   review: z.preprocess(emptyToUndefined, z.string().trim().optional()),
+
+  // Manually set/edit completed_at (issue #34). Always present in the edit
+  // form regardless of status -- no cross-field tie to status or to
+  // createdAt (an earlier completion date than the add date is a legitimate
+  // backfill, not an error; see the issue's Out of scope). Left as the
+  // plain YYYY-MM-DD string here -- the Server Action (updateItemAction)
+  // does the UTC-midnight timestamptz conversion, same "schema validates
+  // the shape, the action does the DB-shape conversion" split status/rating/
+  // etc. already follow.
+  completedAt: z.preprocess(
+    emptyToUndefined,
+    z.string().trim().refine(isValidCalendarDate, "Enter a valid date").optional(),
+  ),
 });
 
 export type EditItemInput = z.infer<typeof editItemSchema>;

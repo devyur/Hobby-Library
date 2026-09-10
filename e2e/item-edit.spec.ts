@@ -325,8 +325,10 @@ test.describe("Edit item -- core fields (issue #16)", () => {
         .single();
       expect(row?.status).toBe("completed");
       expect(row?.review).toBe("Loved it, finished last night");
-      // completed_at editing is out of scope (#34) -- this action never
-      // writes it, even when status becomes Completed through the nudge.
+      // The nudge only forces status -- it never reads/defaults the
+      // Completed date field (issue #34), so an untouched (blank) field
+      // stays null even when status becomes Completed through the nudge.
+      // e2e/completed-date.spec.ts covers the field itself in depth.
       expect(row?.completed_at).toBeNull();
 
       await user.auth.signOut();

@@ -52,9 +52,11 @@ const PRIORITY_OPTIONS = [
 // still not editable -- #18 only makes subtype editable, scoped to the
 // item's existing category -- and that label reflects the last-saved
 // subtype name, refreshed like every other field via updateItemAction's own
-// redirect back to this same route). Added/Completed dates and Tags are
-// rendered here (unchanged in both view and edit mode) since they sit
-// visually alongside the fields this issue does make editable.
+// redirect back to this same route). Added date and Tags are rendered here
+// (unchanged in both view and edit mode) since they sit visually alongside
+// the fields this issue does make editable; the read-only "Completed:" row
+// in view mode is likewise unchanged, but edit mode gained its own editable
+// Completed date field in #34 (see the completedAt input further down).
 //
 // Pre-edit rating/review/status are needed at submit time to compute the
 // nudge's before/after diff -- passed down as props from the Server
@@ -104,6 +106,7 @@ type ItemEditFormContextValue = {
   rating: number | null;
   priority: PriorityLevel | null;
   categoryId: string;
+  completedAt: string | null;
   subtypeId: string;
   setSubtypeId: (subtypeId: string) => void;
   subtypeOptions: SubtypeChoice[];
@@ -244,6 +247,7 @@ export function ItemEditFormProvider({
       priority: formData.get("priority"),
       notes: formData.get("notes"),
       review: formData.get("review"),
+      completedAt: formData.get("completedAt"),
     });
 
     if (!parsed.success) {
@@ -339,6 +343,7 @@ export function ItemEditFormProvider({
     rating,
     priority,
     categoryId,
+    completedAt,
     subtypeId,
     setSubtypeId,
     subtypeOptions,
@@ -382,6 +387,7 @@ export function ItemEditFormPrimary() {
     isDeleting,
     renderDatesAndTags,
     categoryId,
+    completedAt,
     subtypeId,
     setSubtypeId,
     subtypeOptions,
@@ -550,6 +556,39 @@ export function ItemEditFormPrimary() {
         {fieldErrors.subtypeId ? (
           <p id="subtype-error" className="text-sm text-red-600 dark:text-red-400">
             {fieldErrors.subtypeId}
+          </p>
+        ) : null}
+      </div>
+
+      {/* Manually set/edit completed_at (issue #34). Always shown, not
+          gated to status = Completed -- a user can record a completion
+          date before marking an item Completed, or leave one in place
+          while changing status away from it (plan.md §4: "set manually,
+          never inferred automatically"). Pre-filled from the completedAt
+          prop's first 10 chars (its YYYY-MM-DD portion) since completed_at
+          is always written as UTC midnight for a calendar date -- see
+          updateItemAction's own comment on that convention -- so slicing
+          is timezone-safe, matching getDashboardData()'s
+          row.completed_at.slice(0, 7). Left empty clears completed_at to
+          null on save (editItemSchema's emptyToUndefined + updateItemAction's
+          `?? null`), same explicit-null pattern rating/priority/notes/review
+          already use. Deliberately NOT read by the #16 nudge's
+          submitWithStatus -- that only forces the Status select and
+          resubmits this same form, so whatever the user already typed here
+          (or left blank) rides along unchanged. */}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="completedAt">Completed date</Label>
+        <Input
+          id="completedAt"
+          name="completedAt"
+          type="date"
+          defaultValue={completedAt ? completedAt.slice(0, 10) : ""}
+          aria-invalid={!!fieldErrors.completedAt}
+          aria-describedby={fieldErrors.completedAt ? "completedAt-error" : undefined}
+        />
+        {fieldErrors.completedAt ? (
+          <p id="completedAt-error" className="text-sm text-red-600 dark:text-red-400">
+            {fieldErrors.completedAt}
           </p>
         ) : null}
       </div>

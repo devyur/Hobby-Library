@@ -13,10 +13,12 @@ import {
 // against the live project. What only a live browser + real project can
 // prove is covered here rather than lib/queries/dashboard.test.ts's mocked
 // unit coverage: the page actually renders every stat's real empty state
-// for a brand-new account with no crash, and -- since nothing in the
-// shipped app can write `completed_at` yet (#34 is still open) -- a
-// seeded-via-admin-API scenario with real `completed_at` values proves the
-// Completion trends chart's zero-fill logic once that data exists.
+// for a brand-new account with no crash, and a seeded-via-admin-API
+// scenario with real `completed_at` values proves the Completion trends
+// chart's zero-fill logic. (completed_at is also now settable through the
+// real edit form -- issue #34 -- see e2e/completed-date.spec.ts for that
+// UI-driven path; this file keeps direct-insert seeding so the zero-fill
+// math above stays independent of the edit form itself.)
 //
 // Test accounts are created via the Supabase Admin API (auth.admin.createUser)
 // rather than the public /register flow, same as e2e/trash.spec.ts, to
@@ -145,7 +147,8 @@ test.describe("Dashboard statistics (issue #27)", () => {
 
       // Every one of the four seeded V1 categories renders its own
       // Completion trends panel, and every one shows the empty state --
-      // completed_at is all-NULL for a brand-new account (#34 unimplemented).
+      // completed_at is all-NULL for a brand-new account with nothing
+      // completed yet.
       for (const categoryName of ["Games", "Books", "Audio", "Video"]) {
         const panel = main.locator(`[aria-label="${categoryName} completion trend"]`);
         await expect(panel).toBeVisible();
