@@ -16,7 +16,10 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
       type={type}
       data-slot="input"
       className={cn(
-        "h-9 w-full min-w-0 rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text-primary shadow-xs transition-[color,box-shadow] outline-none placeholder:text-text-secondary focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-accent/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-red-500 aria-invalid:ring-3 aria-invalid:ring-red-500/20",
+        // Mobile-first h-11 (44px touch-target baseline, issue #31),
+        // md:h-9 restores the original desktop density -- same pattern as
+        // button.tsx's size variants.
+        "h-11 w-full min-w-0 rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text-primary shadow-xs transition-[color,box-shadow] outline-none placeholder:text-text-secondary focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-accent/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-red-500 aria-invalid:ring-3 aria-invalid:ring-red-500/20 md:h-9",
         className
       )}
       {...props}

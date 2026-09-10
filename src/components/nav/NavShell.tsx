@@ -14,8 +14,9 @@ import type { NavItem } from "./navItems";
 // full-width vertical nav panel -- per ui-direction.md's "Bottom/compact
 // navigation on mobile" note, this keeps every destination reachable with
 // no horizontal scrolling (a vertical list never needs it, unlike a
-// horizontally-scrolling tab strip would). Exact spacing/touch-target
-// polish is deferred to #31.
+// horizontally-scrolling tab strip would). The hamburger toggle below is
+// size-11 (44x44px, WCAG 2.2 SC 2.5.8 / Apple HIG touch-target baseline --
+// issue #31; was size-9/36px before that pass).
 export function NavShell({
   items,
   children,
@@ -45,7 +46,7 @@ export function NavShell({
             aria-controls="mobile-nav-panel"
             aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
             onClick={() => setMobileOpen((open) => !open)}
-            className="flex size-9 items-center justify-center rounded-md border border-border text-text-primary"
+            className="flex size-11 items-center justify-center rounded-md border border-border text-text-primary"
           >
             <svg
               viewBox="0 0 24 24"

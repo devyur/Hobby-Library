@@ -337,7 +337,10 @@ export function LibraryView({
             multi-select list inside, same shape as the Full Add form's own
             tag checkbox group (app/(app)/add/AddItemForm.tsx). */}
         <details className="relative">
-          <summary className="flex h-9 w-40 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text-primary shadow-xs [&::-webkit-details-marker]:hidden">
+          {/* Mobile-first h-11 (44px touch-target baseline, issue #31),
+              md:h-9 restores the original desktop density -- same pattern
+              as the Button/Input/Select primitives. */}
+          <summary className="flex h-11 w-40 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text-primary shadow-xs md:h-9 [&::-webkit-details-marker]:hidden">
             Tags{selectedTagIds.length > 0 ? ` (${selectedTagIds.length})` : ""}
           </summary>
           <div className="absolute z-10 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-border bg-surface p-2 shadow-md">
@@ -347,7 +350,7 @@ export function LibraryView({
               tags.map((tag) => (
                 <label
                   key={tag.id}
-                  className="flex items-center gap-2 py-1 text-sm text-text-primary"
+                  className="flex items-center gap-2 py-3 text-sm text-text-primary md:py-1"
                 >
                   <Checkbox
                     checked={selectedTagIds.includes(tag.id)}

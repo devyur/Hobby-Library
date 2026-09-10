@@ -146,7 +146,13 @@ export function ItemTagsEditor({
                   aria-label={`Remove ${tag.name}`}
                   onClick={() => handleDetach(tag)}
                   disabled={isPending}
-                  className="rounded-full text-text-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
+                  // -m-1.5 offsets the added padding so the visible chip
+                  // doesn't grow -- only the tappable area does (a full
+                  // 44px target here would dwarf the chip's own text, which
+                  // would look broken -- see issue #31's PR comment for why
+                  // this stays a partial improvement rather than full
+                  // 44x44).
+                  className="-m-1.5 rounded-full p-1.5 text-text-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
                 >
                   ×
                 </button>

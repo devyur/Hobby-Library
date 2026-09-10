@@ -274,7 +274,9 @@ export function AddItemForm({
               {tags.map((tag) => (
                 <label
                   key={tag.id}
-                  className="flex items-center gap-2 text-sm text-text-primary"
+                  // Mobile-first py-3 (44px touch-target baseline, issue
+                  // #31), md:py-0 restores the original compact grid.
+                  className="flex items-center gap-2 py-3 text-sm text-text-primary md:py-0"
                 >
                   <Checkbox name="tagIds" value={tag.id} />
                   {tag.name}

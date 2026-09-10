@@ -108,7 +108,10 @@ export function ItemLinksEditor({
                 aria-label={`Remove ${link.label || link.url}`}
                 onClick={() => handleRemove(link)}
                 disabled={isPending}
-                className="rounded-full text-text-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
+                // -m-1.5 offsets the added padding so the row doesn't grow
+                // -- see ItemTagsEditor.tsx's remove button for the same
+                // pattern/rationale (issue #31).
+                className="-m-1.5 rounded-full p-1.5 text-text-secondary hover:text-text-primary disabled:pointer-events-none disabled:opacity-50"
               >
                 ×
               </button>

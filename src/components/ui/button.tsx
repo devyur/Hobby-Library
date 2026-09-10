@@ -23,9 +23,14 @@ const buttonVariants = cva(
           "border-border bg-surface text-text-primary hover:bg-bg",
       },
       size: {
-        default: "h-9 px-3",
-        sm: "h-8 px-2.5 text-[0.8rem]",
-        icon: "size-9",
+        // Mobile-first: 44px tall (WCAG 2.2 SC 2.5.8 / Apple HIG touch-target
+        // baseline, issue #31), shrinking back to the original desktop
+        // density at md: and up -- same "same components, responsive
+        // Tailwind classes" pattern NavShell.tsx already established, not a
+        // separate mobile size variant.
+        default: "h-11 px-3 md:h-9",
+        sm: "h-11 px-2.5 text-[0.8rem] md:h-8",
+        icon: "size-11 md:size-9",
       },
     },
     defaultVariants: {
