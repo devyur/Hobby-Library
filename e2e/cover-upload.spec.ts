@@ -90,7 +90,7 @@ const ONE_PIXEL_PNG_BLUE = Buffer.from(
 const OVERSIZED_PNG = Buffer.alloc(5 * 1024 * 1024 + 1024, 0);
 
 test.describe("Cover image upload (issue #19)", () => {
-  test("no-cover placeholder renders beforehand; a valid upload appears immediately on the detail page and in the category Card view", async ({
+  test("no placeholder box beforehand (just the Upload control); a valid upload appears immediately on the detail page and in the category Card view", async ({
     page,
   }) => {
     test.setTimeout(60_000);
@@ -108,9 +108,11 @@ test.describe("Cover image upload (issue #19)", () => {
       await loginViaUI(page, email);
       await page.goto(`/${categorySlug}/${itemId}`);
 
+      // No placeholder box on the detail page's upload control (unlike Card
+      // view, which keeps it for grid alignment) -- just the Upload button.
       await expect(
         page.getByRole("img", { name: /no cover image for no cover yet/i }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       const uploadButton = page.getByRole("button", { name: /^upload cover$/i });
       await expect(uploadButton).toBeVisible();
 
@@ -250,7 +252,7 @@ test.describe("Cover image upload (issue #19)", () => {
       await expect(page.getByRole("button", { name: /^upload cover$/i })).toBeVisible();
       await expect(
         page.getByRole("img", { name: /no cover image for wrong type item/i }),
-      ).toBeVisible();
+      ).toHaveCount(0);
 
       const { data: images } = await user.from("item_images").select("id").eq("item_id", itemId);
       expect(images).toHaveLength(0);

@@ -77,52 +77,63 @@ export default async function ItemDetailPage({
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-10">
-      <div className="flex flex-col gap-6 sm:flex-row">
-        <div className="w-full shrink-0 sm:w-56">
+      {/* Title/subtype heading spans the full width above both columns --
+          not inside the cover/content split below. */}
+      <div className="flex flex-col gap-3">
+        <h1 className="text-3xl font-semibold text-text-primary">{item.title}</h1>
+        <p className="text-sm text-text-secondary">
+          {category.name} · {item.subtypeName}
+        </p>
+      </div>
+
+      {/* Two-column on wider viewports: cover stays at its current width in
+          a left column, everything else moves into a right column beside
+          it instead of stacking in one full-width column below the cover
+          (which left a large empty gap next to the narrow cover). Collapses
+          to a single stacked column below md, matching NavShell.tsx's
+          shell breakpoint, since the mobile/responsive pass (#31) hasn't
+          touched this page yet. */}
+      <div className="flex flex-col gap-8 md:grid md:grid-cols-[14rem_1fr] md:items-start">
+        <div className="w-full shrink-0">
           <CoverUploadControl itemId={item.id} coverUrl={item.coverUrl} title={item.title} />
         </div>
 
-        <div className="flex flex-1 flex-col gap-3">
-          <h1 className="text-3xl font-semibold text-text-primary">{item.title}</h1>
-          <p className="text-sm text-text-secondary">
-            {category.name} · {item.subtypeName}
-          </p>
+        <div className="flex flex-col gap-8">
+          {/* Status/rating/priority/notes/review, plus the Added/Completed
+              dates and Tags that sit alongside them -- view mode by
+              default, toggled into an edit form in place (issue #16).
+              Detail page never truncates tags -- maxVisible = the full tag
+              count, unlike the library view's default-3 "+N" behavior. */}
+          <ItemEditForm
+            itemId={item.id}
+            status={item.status}
+            rating={item.rating}
+            priority={item.priority}
+            notes={item.notes}
+            review={item.review}
+            createdAt={item.createdAt}
+            completedAt={item.completedAt}
+            categoryId={item.categoryId}
+            subtypeId={item.subtypeId}
+            subtypeOptions={subtypeOptions}
+            tags={item.tags}
+            tagSuggestions={tagSuggestions}
+          />
+
+          {/* Always interactive, independent of ItemEditForm's Edit/Save
+              toggle (issue #20) -- same #17/ItemTagsEditor precedent. Owns
+              its own local links state (see the component's header comment
+              for why that's safe here, unlike ItemTagsEditor). */}
+          <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
+
+          {/* Always interactive, independent of ItemEditForm's Edit/Save
+              toggle (issue #21) -- same ItemLinksEditor precedent. Owns its
+              own local attachments state, seeded from the server-rendered
+              item.attachments, for the same "never unmounted by page.tsx"
+              reason ItemLinksEditor documents. */}
+          <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
         </div>
       </div>
-
-      {/* Status/rating/priority/notes/review, plus the Added/Completed
-          dates and Tags that sit alongside them -- view mode by default,
-          toggled into an edit form in place (issue #16). Detail page never
-          truncates tags -- maxVisible = the full tag count, unlike the
-          library view's default-3 "+N" behavior. */}
-      <ItemEditForm
-        itemId={item.id}
-        status={item.status}
-        rating={item.rating}
-        priority={item.priority}
-        notes={item.notes}
-        review={item.review}
-        createdAt={item.createdAt}
-        completedAt={item.completedAt}
-        categoryId={item.categoryId}
-        subtypeId={item.subtypeId}
-        subtypeOptions={subtypeOptions}
-        tags={item.tags}
-        tagSuggestions={tagSuggestions}
-      />
-
-      {/* Always interactive, independent of ItemEditForm's Edit/Save toggle
-          (issue #20) -- same #17/ItemTagsEditor precedent. Owns its own
-          local links state (see the component's header comment for why
-          that's safe here, unlike ItemTagsEditor). */}
-      <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
-
-      {/* Always interactive, independent of ItemEditForm's Edit/Save toggle
-          (issue #21) -- same ItemLinksEditor precedent. Owns its own local
-          attachments state, seeded from the server-rendered
-          item.attachments, for the same "never unmounted by page.tsx"
-          reason ItemLinksEditor documents. */}
-      <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
     </div>
   );
 }

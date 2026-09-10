@@ -85,7 +85,9 @@ export function CoverUploadControl({
 
   return (
     <div className="flex flex-col gap-2">
-      <CoverThumbnail coverUrl={coverUrl} title={title} />
+      {/* hideWhenEmpty: no tall empty placeholder box here when there's no
+          cover yet -- see CoverThumbnail's own header comment. */}
+      <CoverThumbnail coverUrl={coverUrl} title={title} hideWhenEmpty />
 
       <form ref={formRef} action={formAction}>
         <Label htmlFor={inputId} className="sr-only">

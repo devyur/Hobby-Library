@@ -7,14 +7,28 @@
 // private `covers` bucket (a different host/query string every render),
 // which doesn't fit next/image's static remotePatterns config cleanly for a
 // single-consumer app.
+//
+// hideWhenEmpty (default false): Card view (ItemCard.tsx) still needs the
+// placeholder box even with no cover -- every card in the grid needs the
+// same fixed aspect-ratio slot so the grid stays aligned regardless of which
+// items have covers. The item detail page's CoverUploadControl is the one
+// caller that opts into hiding it: there, the placeholder box plus a
+// separate "Upload cover" button below it left a tall block of empty space
+// for a no-cover item, so that caller passes hideWhenEmpty to collapse the
+// no-cover state down to just the Upload control, with nothing rendered by
+// this component at all.
 export function CoverThumbnail({
   coverUrl,
   title,
+  hideWhenEmpty = false,
 }: {
   coverUrl: string | null;
   title: string;
+  hideWhenEmpty?: boolean;
 }) {
   if (!coverUrl) {
+    if (hideWhenEmpty) return null;
+
     return (
       <div
         role="img"

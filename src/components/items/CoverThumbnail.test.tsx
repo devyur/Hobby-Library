@@ -16,6 +16,16 @@ describe("CoverThumbnail", () => {
     expect(screen.queryByRole("img", { name: /^cover for/i })).not.toBeInTheDocument();
   });
 
+  it("renders nothing when there is no cover and hideWhenEmpty is set (item detail page's Upload control)", () => {
+    const { container } = render(
+      <CoverThumbnail coverUrl={null} title="Untitled Item" hideWhenEmpty />,
+    );
+    expect(
+      screen.queryByRole("img", { name: /no cover image for untitled item/i }),
+    ).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
   it("renders the cover image with an alt text when a signed URL is present", () => {
     render(
       <CoverThumbnail

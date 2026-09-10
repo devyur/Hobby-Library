@@ -235,10 +235,14 @@ test.describe("Item detail page (issue #13)", () => {
       await expect(page.getByText(/\/10/)).toHaveCount(0);
       await expect(page.getByText(/^(Low|Medium|High)$/)).toHaveCount(0);
 
-      // No cover -> the defined placeholder, not a broken/empty box.
+      // No cover -> no placeholder box on the detail page (unlike Card
+      // view's ItemCard.tsx, which keeps it for grid alignment) -- just the
+      // Upload cover control, per the CoverUploadControl hideWhenEmpty
+      // behavior.
       await expect(
         page.getByRole("img", { name: /no cover image for untitled draft/i }),
-      ).toBeVisible();
+      ).toHaveCount(0);
+      await expect(page.getByRole("button", { name: /^upload cover$/i })).toBeVisible();
 
       // The Tags heading itself always renders now (issue #17 made it an
       // always-interactive add-tag section, not conditional on already
