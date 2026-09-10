@@ -10,6 +10,14 @@ import { Select } from "@/components/ui/select";
 import { filterLibraryItemsAction } from "@/lib/actions/items";
 import { updateDefaultSort, updateListViewMode } from "@/lib/actions/preferences";
 import type { ItemStatus, LibraryItem, LibrarySort } from "@/lib/queries/items";
+// resolveSortDirection/LibrarySortDirection come from this leaf module
+// directly (not from "@/lib/queries/items", which the line above only
+// type-imports from) -- items.ts's top-level `createClient` import
+// (@/lib/supabase/server) depends on next/headers, which is
+// Server-Component-only; a *value* import of resolveSortDirection through
+// items.ts would pull that whole module graph into this client component's
+// bundle and fail the build. See sortDirection.ts's own comment.
+import { resolveSortDirection, type LibrarySortDirection } from "@/lib/queries/sortDirection";
 import type { SubtypeOption } from "@/lib/queries/subtypes";
 import type { TagOption } from "@/lib/queries/tags";
 
@@ -34,11 +42,34 @@ const STATUS_OPTIONS: { value: ItemStatus; label: string }[] = [
 
 const RATING_OPTIONS = Array.from({ length: 10 }, (_, index) => index + 1);
 
+// Five dimensions (issue #24's original three, plus Rating/Title added by
+// #39) -- labels are Title Case for the UI, distinct from the plain
+// lowercase-with-underscore values LibrarySort/user_preferences.default_sort
+// itself is constrained to (see lib/queries/items.ts).
 const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
   { value: "recently_added", label: "Recently Added" },
   { value: "priority", label: "Priority" },
   { value: "status", label: "Status" },
+  { value: "rating", label: "Rating" },
+  { value: "title", label: "Title (A-Z)" },
 ];
+
+// Direction toggle labels (issue #39's acceptance criteria): each names the
+// dimension's own two concrete states rather than a generic
+// "Ascending"/"Descending", which is meaningless for Priority/Status (no
+// inherent greater/lesser scale -- their "direction" just reverses the
+// fixed bucket order end-to-end). Keyed by the *effective* direction (after
+// resolveSortDirection has already turned a `null` "use the default" into
+// a concrete 'asc'/'desc') -- the button below always shows the label for
+// whichever state is currently active, and clicking it switches to the
+// other one.
+const SORT_DIRECTION_LABELS: Record<LibrarySort, Record<LibrarySortDirection, string>> = {
+  recently_added: { desc: "Newest first", asc: "Oldest first" },
+  priority: { desc: "High → Low", asc: "Low → High" },
+  status: { desc: "Ongoing → Dropped", asc: "Dropped → Ongoing" },
+  rating: { desc: "Highest first", asc: "Lowest first" },
+  title: { asc: "A → Z", desc: "Z → A" },
+};
 
 // Category library view (issue #12): the List/Card toggle is always
 // visible above the content area (including on zero items), defaults to
@@ -73,19 +104,32 @@ const SORT_OPTIONS: { value: LibrarySort; label: string }[] = [
 // happens in the database -- see lib/queries/items.ts's getLibraryItems and
 // database-schema.md §5.
 //
-// Sort control (issue #24): `sort` joins that same effect/action rather than
-// getting its own -- it's orthogonal to search/filters (an ORDER BY applied
-// on top of whatever WHERE they produce), but still has to ride the same
-// server round trip, since LibraryItem has no created_at for a client-side
-// re-sort. `items` (the server-fetched prop) is already sorted per
-// `initialSort` (page.tsx passes it to getLibraryItems too), so
+// Sort control (issue #24, direction toggle + Rating/Title added by #39):
+// `sort`/`direction` join that same effect/action rather than getting their
+// own -- both are orthogonal to search/filters (an ORDER BY applied on top
+// of whatever WHERE they produce), but still have to ride the same server
+// round trip, since LibraryItem has no created_at/rating/title fields
+// LibraryView itself could re-sort by client-side. `items` (the
+// server-fetched prop) is already sorted per `initialSort`/
+// `initialDirection` (page.tsx passes both to getLibraryItems too), so
 // `displayedItems` can keep rendering `items` directly -- no extra query --
-// for as long as `sort` stays at its initial value and no search/filter is
-// active; changing `sort` away from `initialSort` folds into `hasActiveQuery`
-// below so it triggers the same debounced round trip filters/search already
-// use. Selecting an option is applied optimistically to local `sort` state
-// immediately, then persisted fire-and-forget via updateDefaultSort -- same
-// pattern as the List/Card toggle's updateListViewMode.
+// for as long as `sort`/`direction` stay at their initial values and no
+// search/filter is active; either changing away from its initial value
+// folds into `hasActiveQuery` below so it triggers the same debounced round
+// trip filters/search already use. Selecting a sort option or toggling
+// direction is applied optimistically to local state immediately, then
+// persisted fire-and-forget via updateDefaultSort -- same pattern as the
+// List/Card toggle's updateListViewMode.
+//
+// `direction` holds the *raw* persisted/local value (asc/desc/null, `null`
+// meaning "use this dimension's own default") -- resolveSortDirection
+// (lib/queries/items.ts) turns that into the concrete 'asc'/'desc'
+// (`effectiveDirection` below) actually used for the direction toggle's
+// label and passed to the server. Switching `sort` (handleSortChange)
+// always resets `direction` back to `null` -- never carries over whatever
+// raw asc/desc the previously-selected dimension happened to have (issue
+// #39's acceptance criteria) -- so the newly-selected dimension opens on
+// its own natural default rather than an unrelated one's.
 export function LibraryView({
   categoryId,
   categoryName,
@@ -93,6 +137,7 @@ export function LibraryView({
   items,
   initialViewMode,
   initialSort,
+  initialDirection,
   subtypes,
   tags,
 }: {
@@ -102,12 +147,15 @@ export function LibraryView({
   items: LibraryItem[];
   initialViewMode: ViewMode;
   initialSort: LibrarySort;
+  initialDirection: LibrarySortDirection | null;
   subtypes: SubtypeOption[];
   tags: TagOption[];
 }) {
   const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode);
   const [searchTerm, setSearchTerm] = useState("");
   const [sort, setSort] = useState<LibrarySort>(initialSort);
+  const [direction, setDirection] = useState<LibrarySortDirection | null>(initialDirection);
+  const effectiveDirection = resolveSortDirection(sort, direction);
 
   // Filter controls (issue #23) -- "" means the dimension's default ("All
   // subtypes"/"All statuses"/"Any rating"); an empty selectedTagIds array
@@ -130,12 +178,19 @@ export function LibraryView({
   const trimmedSearchTerm = searchTerm.trim();
   const hasActiveFilters =
     subtypeId !== "" || status !== "" || selectedTagIds.length > 0 || ratingMin !== "";
-  // `items` only matches the currently-selected sort while `sort` is still
-  // at its initial (server-fetched) value -- once the user picks a
-  // different one, rendering `items` as-is would show the wrong order, so
-  // that also has to route through the same round trip as an active
-  // search/filter.
-  const hasActiveQuery = trimmedSearchTerm !== "" || hasActiveFilters || sort !== initialSort;
+  // `items` only matches the currently-selected sort+direction while both
+  // are still at their initial (server-fetched) values -- once the user
+  // picks a different dimension or toggles direction, rendering `items`
+  // as-is would show the wrong order, so that also has to route through the
+  // same round trip as an active search/filter. Compared as the raw
+  // persisted/local values (not `effectiveDirection`) -- consistent with
+  // `sort` itself, which is also compared raw rather than "does this
+  // resolve to the same order".
+  const hasActiveQuery =
+    trimmedSearchTerm !== "" ||
+    hasActiveFilters ||
+    sort !== initialSort ||
+    direction !== initialDirection;
   const displayedItems = hasActiveQuery ? (queryResults ?? items) : items;
 
   // Stable string key for the effect's dependency array -- selectedTagIds'
@@ -160,6 +215,7 @@ export function LibraryView({
           minRating: ratingMin === "" ? undefined : ratingMin,
         },
         sort,
+        direction,
       )
         .then((results) => {
           if (queryRequestId.current === thisRequestId) {
@@ -189,6 +245,7 @@ export function LibraryView({
     tagIdsKey,
     ratingMin,
     sort,
+    direction,
     hasActiveQuery,
   ]);
 
@@ -201,11 +258,30 @@ export function LibraryView({
     });
   }
 
+  // Direction toggle (issue #39) -- flips the *effective* (already-resolved)
+  // direction to its other state and persists that as an explicit
+  // 'asc'/'desc' (never null -- the user just made an explicit choice, so
+  // there's no more "use the dimension's default" left to represent).
+  // `sort` rides along unchanged in the same updateDefaultSort call, per
+  // that action's own "fold direction into the same call" shape.
+  function handleDirectionToggle() {
+    const nextDirection: LibrarySortDirection = effectiveDirection === "asc" ? "desc" : "asc";
+
+    setDirection(nextDirection);
+    updateDefaultSort(sort, nextDirection).catch(() => {
+      // Intentionally swallowed -- see handleSelect's comment above.
+    });
+  }
+
   function handleSortChange(nextSort: LibrarySort) {
     if (nextSort === sort) return;
 
     setSort(nextSort);
-    updateDefaultSort(nextSort).catch(() => {
+    // Direction always resets to null (the new dimension's own default) on
+    // a dimension switch -- see this component's own comment above
+    // handleDirectionToggle/the props block for why.
+    setDirection(null);
+    updateDefaultSort(nextSort, null).catch(() => {
       // Intentionally swallowed -- see handleSelect's comment above.
     });
   }
@@ -383,11 +459,12 @@ export function LibraryView({
           Clear filters
         </Button>
 
-        {/* Sort control (issue #24) -- independent of the four filter
-            controls above (not reset by Clear filters, doesn't reset them):
-            an ORDER BY composed on top of whatever WHERE search/filters
-            already produced, per this issue's own constraint. Always
-            visible, same convention as the rest of this row. */}
+        {/* Sort control (issue #24, direction toggle added by #39) --
+            independent of the four filter controls above (not reset by
+            Clear filters, doesn't reset them): an ORDER BY composed on top
+            of whatever WHERE search/filters already produced, per this
+            issue's own constraint. Always visible, same convention as the
+            rest of this row. */}
         <Select
           aria-label="Sort"
           value={sort}
@@ -400,6 +477,21 @@ export function LibraryView({
             </option>
           ))}
         </Select>
+
+        {/* Direction toggle (issue #39) -- applies only to the
+            currently-selected sort dimension above. Labeled with that
+            dimension's own two concrete states (e.g. "High → Low"), not a
+            generic "Ascending/Descending" -- see SORT_DIRECTION_LABELS'
+            own comment for why. */}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label="Sort direction"
+          onClick={handleDirectionToggle}
+        >
+          {SORT_DIRECTION_LABELS[sort][effectiveDirection]}
+        </Button>
       </div>
 
       {displayedItems.length === 0 ? (

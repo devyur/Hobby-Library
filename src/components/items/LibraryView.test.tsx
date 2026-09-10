@@ -64,6 +64,7 @@ function renderLibraryView(overrides: Partial<ComponentProps<typeof LibraryView>
       items={items}
       initialViewMode="list"
       initialSort="recently_added"
+      initialDirection={null}
       subtypes={subtypes}
       tags={tags}
       {...overrides}
@@ -209,6 +210,7 @@ describe("LibraryView", () => {
         minRating: undefined,
       },
       "recently_added",
+      null,
     );
     expect(screen.queryByRole("link", { name: /The Witcher 3/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
@@ -276,6 +278,7 @@ describe("LibraryView", () => {
         minRating: undefined,
       },
       "recently_added",
+      null,
     );
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /The Witcher 3/ })).not.toBeInTheDocument();
@@ -303,6 +306,7 @@ describe("LibraryView", () => {
       "",
       expect.objectContaining({ tagIds: expect.arrayContaining(["tag-coop", "tag-story"]) }),
       "recently_added",
+      null,
     );
     const lastCallTagIds = filterLibraryItemsActionMock.mock.calls.at(-1)![2].tagIds;
     expect(lastCallTagIds).toHaveLength(2);
@@ -338,6 +342,7 @@ describe("LibraryView", () => {
         minRating: 8,
       },
       "recently_added",
+      null,
     );
   });
 
@@ -384,18 +389,25 @@ describe("LibraryView", () => {
     expect(filterLibraryItemsActionMock).not.toHaveBeenCalled();
   });
 
-  // Sort control (issue #24).
-  it("always shows the Sort control with exactly three options, defaulting to initialSort", () => {
+  // Sort control (issue #24, extended to five dimensions + a direction
+  // toggle by #39).
+  it("always shows the Sort control with exactly five options, defaulting to initialSort", () => {
     renderLibraryView({ items: [], initialSort: "priority" });
 
     const sortSelect = screen.getByRole("combobox", { name: "Sort" }) as HTMLSelectElement;
     const optionLabels = Array.from(sortSelect.options).map((option) => option.textContent);
 
-    expect(optionLabels).toEqual(["Recently Added", "Priority", "Status"]);
+    expect(optionLabels).toEqual([
+      "Recently Added",
+      "Priority",
+      "Status",
+      "Rating",
+      "Title (A-Z)",
+    ]);
     expect(sortSelect).toHaveValue("priority");
   });
 
-  it("selecting Priority calls filterLibraryItemsAction with the chosen sort, swaps in results, and persists via updateDefaultSort", async () => {
+  it("selecting Priority calls filterLibraryItemsAction with the chosen sort (and a null direction reset), swaps in results, and persists via updateDefaultSort", async () => {
     vi.useFakeTimers();
     updateDefaultSortMock.mockResolvedValue({ error: null });
     filterLibraryItemsActionMock.mockResolvedValue([items[1], items[0]]);
@@ -420,9 +432,15 @@ describe("LibraryView", () => {
         minRating: undefined,
       },
       "priority",
+      null,
     );
-    expect(updateDefaultSortMock).toHaveBeenCalledWith("priority");
+    expect(updateDefaultSortMock).toHaveBeenCalledWith("priority", null);
     expect(screen.getByRole("combobox", { name: "Sort" })).toHaveValue("priority");
+    // Direction resets to the new dimension's own default (High -> Low) --
+    // never carries over recently_added's own direction state.
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "High → Low",
+    );
   });
 
   it("does not throw when the sort persistence write rejects (fire-and-forget)", async () => {
@@ -473,6 +491,7 @@ describe("LibraryView", () => {
         minRating: undefined,
       },
       "status",
+      null,
     );
   });
 
@@ -518,5 +537,161 @@ describe("LibraryView", () => {
     expect(screen.getByRole("link", { name: /The Witcher 3/ })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Hades/ })).toBeInTheDocument();
     expect(filterLibraryItemsActionMock).not.toHaveBeenCalled();
+  });
+
+  // Direction toggle (issue #39).
+  it('shows "Newest first" (Recently Added\'s default) on first render with no persisted direction', () => {
+    renderLibraryView();
+
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Newest first",
+    );
+  });
+
+  it("honors a persisted initialDirection on first render (e.g. Oldest first)", () => {
+    renderLibraryView({ initialDirection: "asc" });
+
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Oldest first",
+    );
+  });
+
+  it("clicking the direction toggle flips it, calls filterLibraryItemsAction with the new direction, and persists via updateDefaultSort with the current sort unchanged", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue([items[0], items[1]]);
+
+    renderLibraryView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction" }));
+
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Oldest first",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(filterLibraryItemsActionMock).toHaveBeenCalledWith(
+      CATEGORY_ID,
+      "",
+      {
+        subtypeId: undefined,
+        status: undefined,
+        tagIds: undefined,
+        minRating: undefined,
+      },
+      "recently_added",
+      "asc",
+    );
+    expect(updateDefaultSortMock).toHaveBeenCalledWith("recently_added", "asc");
+  });
+
+  it("does not throw when the direction persistence write rejects (fire-and-forget)", async () => {
+    updateDefaultSortMock.mockRejectedValue(new Error("network hiccup"));
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    expect(() =>
+      fireEvent.click(screen.getByRole("button", { name: "Sort direction" })),
+    ).not.toThrow();
+
+    await waitFor(() => expect(updateDefaultSortMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("switching sort dimension resets the direction label to the new dimension's own default, not the previous dimension's toggled state", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    // Toggle Recently Added to its non-default state first.
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Oldest first",
+    );
+
+    // Switching to Rating must not carry over "asc" from Recently Added --
+    // Rating's own default is "Highest first" (desc), not whatever raw
+    // asc/desc Recently Added happened to be on.
+    updateDefaultSortMock.mockClear();
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "rating" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Highest first",
+    );
+    expect(updateDefaultSortMock).toHaveBeenCalledWith("rating", null);
+  });
+
+  it("Status's direction toggle reads 'Ongoing → Dropped' / 'Dropped → Ongoing', not a generic Ascending/Descending label", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "status" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Ongoing → Dropped",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction" }));
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Dropped → Ongoing",
+    );
+  });
+
+  it("Title's direction toggle reads 'A → Z' / 'Z → A'", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Sort" }), {
+      target: { value: "title" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent("A → Z");
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction" }));
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent("Z → A");
+  });
+
+  it("Clear filters does not reset the current sort direction", async () => {
+    vi.useFakeTimers();
+    updateDefaultSortMock.mockResolvedValue({ error: null });
+    filterLibraryItemsActionMock.mockResolvedValue(items);
+
+    renderLibraryView();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort direction" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(screen.getByRole("button", { name: "Sort direction" })).toHaveTextContent(
+      "Oldest first",
+    );
   });
 });

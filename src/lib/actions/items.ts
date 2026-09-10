@@ -7,6 +7,7 @@ import {
   type LibraryItem,
   type LibraryItemFilters,
   type LibrarySort,
+  type LibrarySortDirection,
 } from "@/lib/queries/items";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -558,8 +559,9 @@ export async function searchLibraryItemsAction(
   categoryId: string,
   searchTerm: string,
   sort?: LibrarySort,
+  direction?: LibrarySortDirection | null,
 ): Promise<LibraryItem[]> {
-  return getLibraryItems(categoryId, searchTerm, undefined, sort);
+  return getLibraryItems(categoryId, searchTerm, undefined, sort, direction);
 }
 
 // Server Action backing LibraryView.tsx's filter controls (issue #23) --
@@ -579,6 +581,7 @@ export async function filterLibraryItemsAction(
   searchTerm: string,
   filters: LibraryItemFilters,
   sort?: LibrarySort,
+  direction?: LibrarySortDirection | null,
 ): Promise<LibraryItem[]> {
-  return getLibraryItems(categoryId, searchTerm, filters, sort);
+  return getLibraryItems(categoryId, searchTerm, filters, sort, direction);
 }

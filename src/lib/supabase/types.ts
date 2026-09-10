@@ -2,13 +2,15 @@
 //
 // Provenance note (issue #7, re-generated for issue #8, re-confirmed for
 // issue #17, re-confirmed for issue #18, re-generated for issue #22,
-// re-generated for issue #38): this sandbox has neither Docker/Podman
-// (required by `supabase gen types typescript --db-url`, which spins up a
-// local Postgres container to introspect) nor a non-interactive Supabase
-// access token (required by `supabase gen types typescript --linked`/
-// `--project-id`, which calls the Management API -- `supabase login` needs
-// an interactive browser). Both re-confirmed absent for #38 too, matching
-// the exact failure documented in #7/#8/#17/#18/#22.
+// re-generated for issue #38, re-generated for issue #39): this sandbox has
+// neither Docker/Podman (required by `supabase gen types typescript
+// --db-url`, which as of CLI 2.117.0 now also spins up a container even for
+// --db-url mode -- confirmed failing here with `LegacyDockerRunError:
+// docker: command not found`) nor a non-interactive Supabase access token
+// (required by `supabase gen types typescript --linked`/`--project-id`,
+// which calls the Management API -- `supabase login` needs an interactive
+// browser). Both re-confirmed absent for #39 too, matching the exact
+// failure documented in #7/#8/#17/#18/#22/#38.
 //
 // This file is still CLI-generated content, not hand-written: it was
 // produced by running `@supabase/postgrest-typegen` -- the same
@@ -21,14 +23,12 @@
 // only resolves over IPv6, unavailable in this sandbox; the pooler's
 // tenant-routing rejects a wrong-region guess immediately, which is how the
 // right region was found), same connection class used for `db push` in
-// #4-#8/#17/#18/#22/#38. Regenerated for #38's migration
-// (20260910150000_make_covers_bucket_public.sql, item_images.updated_at):
-// the `item_images` Row/Insert/Update shapes below now carry `updated_at`.
-// This regen also picked up `item_priority_rank`/`item_status_rank` (added
-// by migration 20260909160000, #24) in the `Functions` map for the first
-// time -- missed by #22's regen (predates #24), not something #38 changed;
-// left in since a full re-introspection reflects the live schema
-// accurately and a hand-trimmed diff would be less honest about that.
+// #4-#8/#17/#18/#22/#38/#39. Regenerated for #39's migration
+// (20260910160000_add_sort_direction_and_dimensions.sql): the
+// `user_preferences` Row/Insert/Update shapes below now carry
+// `default_sort_direction`, and the `Functions` map now includes
+// `item_priority_rank_reverse`/`item_title_sort_key` alongside the
+// existing `item_priority_rank`/`item_status_rank`.
 // Regenerate via the real `supabase` CLI once this repo is `supabase
 // link`ed in an environment with Docker or an access token (see AGENTS.md:
 // regenerate after any schema change).
@@ -383,6 +383,7 @@ export type Database = {
       user_preferences: {
         Row: {
           default_sort: string | null
+          default_sort_direction: string | null
           last_screen: string | null
           list_view_mode: string | null
           theme: string | null
@@ -391,6 +392,7 @@ export type Database = {
         }
         Insert: {
           default_sort?: string | null
+          default_sort_direction?: string | null
           last_screen?: string | null
           list_view_mode?: string | null
           theme?: string | null
@@ -399,6 +401,7 @@ export type Database = {
         }
         Update: {
           default_sort?: string | null
+          default_sort_direction?: string | null
           last_screen?: string | null
           list_view_mode?: string | null
           theme?: string | null
@@ -416,9 +419,17 @@ export type Database = {
         Args: { item: Database["public"]["Tables"]["items"]["Row"] }
         Returns: number
       }
+      item_priority_rank_reverse: {
+        Args: { item: Database["public"]["Tables"]["items"]["Row"] }
+        Returns: number
+      }
       item_status_rank: {
         Args: { item: Database["public"]["Tables"]["items"]["Row"] }
         Returns: number
+      }
+      item_title_sort_key: {
+        Args: { item: Database["public"]["Tables"]["items"]["Row"] }
+        Returns: string
       }
       search_item_ids: {
         Args: { p_category_id: string; p_search_term: string }

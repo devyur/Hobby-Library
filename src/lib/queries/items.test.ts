@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { LibrarySort } from "./items";
+import type { LibrarySort, LibrarySortDirection } from "./items";
 
 // Unit coverage for getLibraryItems' search-term parameter (issue #22).
 // Mocks the Supabase client the same way lib/actions/items.test.ts does --
@@ -15,7 +15,9 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: (...args: unknown[]) => createClientMock(...args),
 }));
 
-const { getLibraryItems } = await import("./items");
+const { getLibraryItems, resolveSortDirection, DEFAULT_SORT_DIRECTION } = await import(
+  "./items"
+);
 
 interface FakeItemsQuery extends PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> {
   select: ReturnType<typeof vi.fn>;
@@ -349,6 +351,148 @@ describe("getLibraryItems sort", () => {
     expect(supabase.itemsQuery.in).toHaveBeenCalledWith("id", ["item-1"]);
     expect(supabase.itemsQuery.eq).toHaveBeenCalledWith("status", "planned");
     expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_status_rank", {
+      ascending: true,
+    });
+  });
+});
+
+// Unit coverage for resolveSortDirection (issue #39) -- the one place a
+// null/undefined direction resolves to a concrete 'asc'/'desc', shared by
+// getLibraryItems below and by LibraryView.tsx/page.tsx.
+describe("resolveSortDirection", () => {
+  it("returns the explicit direction unchanged when one is given", () => {
+    expect(resolveSortDirection("priority", "asc")).toBe("asc");
+    expect(resolveSortDirection("title", "desc")).toBe("desc");
+  });
+
+  it("falls back to each dimension's own DEFAULT_SORT_DIRECTION entry when null/undefined", () => {
+    (Object.keys(DEFAULT_SORT_DIRECTION) as LibrarySort[]).forEach((sort) => {
+      expect(resolveSortDirection(sort, null)).toBe(DEFAULT_SORT_DIRECTION[sort]);
+      expect(resolveSortDirection(sort, undefined)).toBe(DEFAULT_SORT_DIRECTION[sort]);
+    });
+  });
+
+  it("every dimension except title defaults to 'desc'; title defaults to 'asc'", () => {
+    expect(DEFAULT_SORT_DIRECTION.recently_added).toBe("desc");
+    expect(DEFAULT_SORT_DIRECTION.priority).toBe("desc");
+    expect(DEFAULT_SORT_DIRECTION.status).toBe("desc");
+    expect(DEFAULT_SORT_DIRECTION.rating).toBe("desc");
+    expect(DEFAULT_SORT_DIRECTION.title).toBe("asc");
+  });
+});
+
+// Unit coverage for getLibraryItems' `direction` parameter and the two new
+// dimensions it unlocks -- Rating/Title (issue #39, folded in from #40) --
+// same "assert the exact .order(...) calls" approach the #24 sort describe
+// block above uses; live bucket-order/NULL-handling/case-insensitivity
+// verification against the real project is e2e/sort.spec.ts's concern.
+describe("getLibraryItems sort direction (issue #39)", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("recently_added: direction='asc' orders created_at ascending (Oldest first) instead of the desc default", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems(
+      "cat-1",
+      undefined,
+      undefined,
+      "recently_added",
+      "asc" satisfies LibrarySortDirection,
+    );
+
+    expect(supabase.itemsQuery.order).toHaveBeenCalledTimes(1);
+    expect(supabase.itemsQuery.order).toHaveBeenCalledWith("created_at", { ascending: true });
+  });
+
+  it("priority: direction='asc' (Low -> High) orders by item_priority_rank_reverse, not item_priority_rank", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "priority", "asc");
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_priority_rank_reverse", {
+      ascending: true,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+  });
+
+  it("priority: direction='desc' (the default) still orders by item_priority_rank, not the reverse function", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "priority", "desc");
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_priority_rank", {
+      ascending: true,
+    });
+  });
+
+  it("status: direction='asc' (Dropped -> Ongoing) flips item_status_rank's own ascending flag to false", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "status", "asc");
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_status_rank", {
+      ascending: false,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+  });
+
+  it("rating: orders by the rating column with nullsFirst:false in both directions (Highest/Lowest first), then created_at desc", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "rating");
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "rating", {
+      ascending: false,
+      nullsFirst: false,
+    });
+
+    supabase.itemsQuery.order.mockClear();
+    await getLibraryItems("cat-1", undefined, undefined, "rating", "asc");
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "rating", {
+      ascending: true,
+      nullsFirst: false,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+  });
+
+  it("title: orders by the item_title_sort_key computed field (case-insensitive), A->Z by default, then created_at desc", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "title");
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_title_sort_key", {
+      ascending: true,
+    });
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(2, "created_at", {
+      ascending: false,
+    });
+
+    supabase.itemsQuery.order.mockClear();
+    await getLibraryItems("cat-1", undefined, undefined, "title", "desc");
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_title_sort_key", {
+      ascending: false,
+    });
+  });
+
+  it("a null direction (the persisted 'use the default' value) behaves identically to omitting direction", async () => {
+    const supabase = fakeSupabase({ itemsResult: { data: [], error: null } });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getLibraryItems("cat-1", undefined, undefined, "priority", null);
+
+    expect(supabase.itemsQuery.order).toHaveBeenNthCalledWith(1, "item_priority_rank", {
       ascending: true,
     });
   });

@@ -266,20 +266,26 @@ Default initial sorting:
 
 **Recently added — newest first**
 
-The user can switch to:
+The user can switch to one of five dimensions, each with a direction toggle (added by [#39](https://github.com/devyur/Hobby-Library/issues/39), which also folded in [#40](https://github.com/devyur/Hobby-Library/issues/40)'s two additional dimensions below):
 
-- Recently added
-- Priority
-- Status
+- Recently added — **Newest first** (default) / Oldest first
+- Priority — **High → Low** (default) / Low → High
+- Status — **Ongoing → Dropped** (default) / Dropped → Ongoing
+- Rating — **Highest first** (default) / Lowest first
+- Title (A-Z) — **A → Z** (default) / Z → A
 
-Ordering chosen for the two alternatives (decided in [#24](https://github.com/devyur/Hobby-Library/issues/24)):
+The direction toggle's label always states the selected dimension's own two concrete states (as above), never a generic "Ascending/Descending" — that phrasing is meaningless for Priority/Status, which have no inherent greater/lesser scale (see below). Switching *dimension* always resets direction back to the newly-selected one's own default listed above — a direction chosen on one dimension is never carried over to another.
 
-- **Priority** — High → Medium → Low → (no priority set); items with no priority sort last, not first or interleaved.
-- **Status** — Ongoing → Planned → Completed → Dropped.
+Ordering chosen for each dimension (Priority/Status decided in [#24](https://github.com/devyur/Hobby-Library/issues/24); Rating/Title, and every dimension's reversed direction, decided in #39):
 
-Both break ties within a bucket by created_at descending (most recently added first) — the same rule Recently Added uses on its own. No ascending/descending direction toggle in V1 (each of the three is fixed to the one direction above) — moved to [#39](https://github.com/devyur/Hobby-Library/issues/39). Additional sort dimensions beyond these three (e.g. Rating, alphabetical Title) are moved to [#40](https://github.com/devyur/Hobby-Library/issues/40).
+- **Priority** — High → Medium → Low → (no priority set) by default; toggling direction reverses only the High/Medium/Low run to Low → Medium → High — "no priority set" stays pinned last either way, never first or interleaved.
+- **Status** — Ongoing → Planned → Completed → Dropped by default; toggling direction reverses the whole bucket order end-to-end, Dropped → Completed → Planned → Ongoing. Status has no inherent "greater/lesser" scale of its own — this is purely a reversal of the fixed bucket order, not a value judgement about which status is "more."
+- **Rating** — highest-rated first by default (lowest-rated first when toggled); items with no rating set always sort last, in *both* directions — never first, never interleaved with rated items (same NULL-last precedent as the Rating filter, plan.md §11).
+- **Title** — case-insensitive alphabetical, A → Z by default (Z → A when toggled) — e.g. "apple" sorts before "Banana" before "cherry", not grouped by case.
 
-The application should remember the user's chosen sorting preference where practical — implemented via `user_preferences.default_sort` (database-schema.md §3), synced across devices the same way `theme`/`list_view_mode` already are.
+All five dimensions break ties (equal bucket/rating/title) by created_at descending (most recently added first) — the same rule Recently Added uses on its own, and this tie-break is fixed, never itself reversed by the direction toggle.
+
+The application should remember the user's chosen sorting preference (dimension *and* direction) where practical — implemented via `user_preferences.default_sort`/`default_sort_direction` (database-schema.md §3), synced across devices the same way `theme`/`list_view_mode` already are.
 
 ---
 

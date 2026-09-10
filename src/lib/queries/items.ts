@@ -1,6 +1,25 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
 
+import {
+  DEFAULT_SORT_DIRECTION,
+  resolveSortDirection,
+  type LibrarySort,
+  type LibrarySortDirection,
+} from "./sortDirection";
+
+// Re-exported so every existing caller (page.tsx, lib/actions/items.ts,
+// items.test.ts) keeps importing these from "@/lib/queries/items" as
+// before -- LibrarySort/LibrarySortDirection/DEFAULT_SORT_DIRECTION/
+// resolveSortDirection actually live in ./sortDirection.ts now, a
+// dependency-free module split out by issue #39 specifically so
+// LibraryView.tsx (a client component) can import resolveSortDirection
+// directly from there without pulling this file's own `createClient`
+// (next/headers-dependent, Server-Component-only) import into the client
+// bundle -- see sortDirection.ts's own comment for the full reasoning.
+export type { LibrarySort, LibrarySortDirection };
+export { DEFAULT_SORT_DIRECTION, resolveSortDirection };
+
 // Reusable read query (issue #12), added alongside categories.ts rather than
 // overloading it per the issue's own file constraints. Fetches every
 // non-deleted item the signed-in user owns in one category, ordered per the
@@ -65,17 +84,6 @@ export interface LibraryItemFilters {
   minRating?: number;
 }
 
-// Sort dimensions added by issue #24 -- orthogonal to (and composable with)
-// searchTerm/filters above: whichever `sort` is passed is applied as the
-// ORDER BY on top of whatever result set search/filters already narrowed
-// down to. `'recently_added'` (also the fallback when omitted/undefined,
-// matching a null `user_preferences.default_sort`) is unchanged from the
-// fixed created_at-desc order this function always used before this issue.
-// Matches the plain lowercase-with-underscore values
-// `user_preferences.default_sort` itself is constrained to (migration
-// 20260909160000), not the Title Case UI labels.
-export type LibrarySort = "recently_added" | "priority" | "status";
-
 // searchTerm is optional (issue #22): omitted/blank returns the same
 // unfiltered, created_at-desc list as before #22 ever existed. When
 // non-blank, matching itself happens in the database via the
@@ -102,18 +110,24 @@ export type LibrarySort = "recently_added" | "priority" | "status";
 // satisfies (search term) AND (any selected tag), never just one or the
 // other.
 //
-// sort is optional too (issue #24), applied as the final ORDER BY on
-// whatever result set the searchTerm/filters logic above already narrowed
-// to -- see the `.order(...)` calls near the bottom of this function.
-// Priority/Status are expressed as a Postgres-side rank via the
-// `item_priority_rank`/`item_status_rank` PostgREST computed-field functions
-// (migration 20260909160000), not fetched unsorted and reordered in JS, per
-// this issue's own constraint.
+// sort is optional too (issue #24, extended by #39), applied as the final
+// ORDER BY on whatever result set the searchTerm/filters logic above
+// already narrowed to -- see the `.order(...)` calls near the bottom of
+// this function. Priority/Status/Title are expressed as a Postgres-side
+// rank/key via computed-field functions (`item_priority_rank`/
+// `item_priority_rank_reverse`/`item_status_rank`/`item_title_sort_key`,
+// migrations 20260909160000/20260910160000), not fetched unsorted and
+// reordered in JS, per #24's own constraint (reaffirmed by #39 for the two
+// new dimensions). `direction` (issue #39) is resolved to a concrete
+// 'asc'/'desc' via resolveSortDirection before any ORDER BY is built, then
+// applied per-dimension -- see the branches below for what 'asc'/'desc'
+// means for each one.
 export async function getLibraryItems(
   categoryId: string,
   searchTerm?: string,
   filters?: LibraryItemFilters,
   sort?: LibrarySort,
+  direction?: LibrarySortDirection | null,
 ): Promise<LibraryItem[]> {
   const supabase = await createClient();
 
@@ -189,21 +203,61 @@ export async function getLibraryItems(
     .eq("category_id", categoryId)
     .is("deleted_at", null);
 
-  // Priority/Status each order by their computed-field rank first, then
-  // created_at desc as the tie-breaker within a bucket (both per this
-  // issue's acceptance criteria); Recently Added (the default, including
-  // when `sort` is omitted/undefined -- a null user_preferences.default_sort)
-  // is unchanged: created_at desc alone.
-  if (sort === "priority") {
+  // Priority/Status/Rating/Title each order by their sort key first, then
+  // created_at desc as the fixed tie-breaker within a bucket/equal value --
+  // that tie-break is never itself reversed by `direction` (issue #39's
+  // acceptance criteria). Recently Added (the default, including when
+  // `sort` is omitted/undefined -- a null user_preferences.default_sort) has
+  // no separate tie-break since created_at desc/asc *is* its own ordering.
+  //
+  // Priority: no ascending/descending scale of its own (issue #39) -- its
+  // "direction" reverses the fixed High->Low bucket order end-to-end.
+  // Rather than negate a single rank column (which would also move "no
+  // priority set" out of last place), the resolved direction picks between
+  // two separate computed-field rank functions that each independently pin
+  // "no priority set" to last (rank 4): item_priority_rank (High->Low, the
+  // 'desc'/default direction) and item_priority_rank_reverse (Low->High,
+  // 'asc').
+  //
+  // Status: same "no inherent scale, direction reverses the bucket order"
+  // reasoning, but with no "unset" bucket to protect (status is never
+  // null) -- so this one *can* just flip the existing item_status_rank
+  // column's own ascending flag. 'desc' (default, Ongoing->Dropped) reuses
+  // the same `ascending: true` #24 always used; 'asc' (Dropped->Ongoing)
+  // flips it to `ascending: false`, which puts the highest rank
+  // (dropped=4) first -- the fixed bucket order fully reversed.
+  //
+  // Rating: a real numeric scale, ordered directly on the `rating` column.
+  // `nullsFirst: false` is set for *both* directions (not just the default)
+  // so a rating-less item sorts last whether "Highest first" or "Lowest
+  // first" is selected -- same NULL-last precedent as #23's rating filter
+  // and #24's Priority sort.
+  //
+  // Title: case-insensitive (issue #39's acceptance criteria), via the
+  // item_title_sort_key computed field (lower(title)) rather than the raw
+  // `title` column, whose collation isn't guaranteed to interleave by
+  // letter regardless of case.
+  const effectiveSort: LibrarySort = sort ?? "recently_added";
+  const effectiveDirection = resolveSortDirection(effectiveSort, direction);
+
+  if (effectiveSort === "priority") {
+    const rankColumn =
+      effectiveDirection === "asc" ? "item_priority_rank_reverse" : "item_priority_rank";
+    query = query.order(rankColumn, { ascending: true }).order("created_at", { ascending: false });
+  } else if (effectiveSort === "status") {
     query = query
-      .order("item_priority_rank", { ascending: true })
+      .order("item_status_rank", { ascending: effectiveDirection === "desc" })
       .order("created_at", { ascending: false });
-  } else if (sort === "status") {
+  } else if (effectiveSort === "rating") {
     query = query
-      .order("item_status_rank", { ascending: true })
+      .order("rating", { ascending: effectiveDirection === "asc", nullsFirst: false })
+      .order("created_at", { ascending: false });
+  } else if (effectiveSort === "title") {
+    query = query
+      .order("item_title_sort_key", { ascending: effectiveDirection === "asc" })
       .order("created_at", { ascending: false });
   } else {
-    query = query.order("created_at", { ascending: false });
+    query = query.order("created_at", { ascending: effectiveDirection === "asc" });
   }
 
   if (matchingIds) {

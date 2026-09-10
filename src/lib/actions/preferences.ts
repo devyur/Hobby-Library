@@ -94,14 +94,26 @@ export async function updateListViewMode(
 }
 
 // Server Action backing the Sort control in
-// src/components/items/LibraryView.tsx (issue #24). Same session-guarded
-// upsert shape as updateThemePreference/updateLastScreen/updateListViewMode
-// above -- optimistic local update in the client, fire-and-forget
-// persistence here. `sort` matches the check constraint on
-// user_preferences.default_sort added by migration
-// 20260909160000_add_default_sort_check_constraint.sql.
+// src/components/items/LibraryView.tsx (issue #24, extended by #39 to also
+// carry direction). Same session-guarded upsert shape as
+// updateThemePreference/updateLastScreen/updateListViewMode above --
+// optimistic local update in the client, fire-and-forget persistence here.
+// `sort` matches the check constraint on user_preferences.default_sort
+// (migration 20260909160000, extended by 20260910160000 for
+// rating/title). `direction` matches default_sort_direction's own check
+// constraint (same migration) -- folded into this one call rather than a
+// paired action (issue #39's Constraints leave that choice to the
+// engineer) since every caller that changes one already has the other in
+// hand: LibraryView.tsx's handleSortChange resets direction to `null`
+// alongside the new sort, and its handleDirectionChange always passes the
+// currently-selected `sort` back unchanged alongside the new direction. A
+// `null` direction persists as SQL NULL -- "use this dimension's own
+// natural default direction" (resolveSortDirection, lib/queries/items.ts),
+// never a stale direction value carried over from a previously-selected
+// dimension.
 export async function updateDefaultSort(
-  sort: "recently_added" | "priority" | "status",
+  sort: "recently_added" | "priority" | "status" | "rating" | "title",
+  direction: "asc" | "desc" | null,
 ): Promise<{ error: string | null }> {
   const supabase = await createClient();
 
@@ -117,6 +129,7 @@ export async function updateDefaultSort(
     {
       user_id: user.id,
       default_sort: sort,
+      default_sort_direction: direction,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" },

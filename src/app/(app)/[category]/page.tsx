@@ -1,7 +1,11 @@
 import { notFound } from "next/navigation";
 
 import { LibraryView, type ViewMode } from "@/components/items/LibraryView";
-import { getLibraryItems, type LibrarySort } from "@/lib/queries/items";
+import {
+  getLibraryItems,
+  type LibrarySort,
+  type LibrarySortDirection,
+} from "@/lib/queries/items";
 import { getSubtypes } from "@/lib/queries/subtypes";
 import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
@@ -23,15 +27,22 @@ import { createClient } from "@/lib/supabase/server";
 // form already uses), rather than a category-scoped query. getTags() is
 // already unscoped to any category.
 //
-// Sort (issue #24): `default_sort` is read alongside `list_view_mode` from
-// the same preferences row -- one column per user, not per category, so
-// navigating between categories keeps the same sort selected. The initial
-// `items` fetch itself is sorted per that preference (not just
+// Sort (issue #24, direction added by #39): `default_sort`/
+// `default_sort_direction` are read alongside `list_view_mode` from the
+// same preferences row -- one column pair per user, not per category, so
+// navigating between categories keeps the same sort+direction selected.
+// The initial `items` fetch itself is sorted per that preference (not just
 // created_at-desc, unconditionally patched up client-side later) so a
 // reload/first render never flashes the wrong order before LibraryView's
 // own effect has a chance to run -- this is why preferences is fetched
 // ahead of items below instead of alongside it in one Promise.all, unlike
-// subtypes/tags which have no such ordering dependency.
+// subtypes/tags which have no such ordering dependency. `initialDirection`
+// is passed through as the *raw* persisted value (asc/desc/null), not
+// resolved to a concrete default here -- resolveSortDirection
+// (lib/queries/items.ts, used by both getLibraryItems and
+// LibraryView.tsx) is the one place that resolution happens, so both stay
+// in agreement about what "default" means for whichever dimension is
+// selected.
 export default async function CategoryPage({
   params,
 }: {
@@ -62,7 +73,7 @@ export default async function CategoryPage({
   const preferences = user
     ? await supabase
         .from("user_preferences")
-        .select("list_view_mode, default_sort")
+        .select("list_view_mode, default_sort, default_sort_direction")
         .eq("user_id", user.id)
         .maybeSingle()
         .then(({ data }) => data)
@@ -71,12 +82,19 @@ export default async function CategoryPage({
   const initialViewMode: ViewMode =
     preferences?.list_view_mode === "card" ? "card" : "list";
   const initialSort: LibrarySort =
-    preferences?.default_sort === "priority" || preferences?.default_sort === "status"
+    preferences?.default_sort === "priority" ||
+    preferences?.default_sort === "status" ||
+    preferences?.default_sort === "rating" ||
+    preferences?.default_sort === "title"
       ? preferences.default_sort
       : "recently_added";
+  const initialDirection: LibrarySortDirection | null =
+    preferences?.default_sort_direction === "asc" || preferences?.default_sort_direction === "desc"
+      ? preferences.default_sort_direction
+      : null;
 
   const [items, subtypes, tags] = await Promise.all([
-    getLibraryItems(category.id, undefined, undefined, initialSort),
+    getLibraryItems(category.id, undefined, undefined, initialSort, initialDirection),
     getSubtypes(),
     getTags(),
   ]);
@@ -89,6 +107,7 @@ export default async function CategoryPage({
       items={items}
       initialViewMode={initialViewMode}
       initialSort={initialSort}
+      initialDirection={initialDirection}
       subtypes={subtypes}
       tags={tags}
     />
