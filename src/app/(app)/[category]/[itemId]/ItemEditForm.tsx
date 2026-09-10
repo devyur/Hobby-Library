@@ -1,7 +1,7 @@
 "use client";
 
-import { useActionState, useRef, useState } from "react";
-import type { FormEvent } from "react";
+import { createContext, useActionState, useContext, useRef, useState } from "react";
+import type { FormEvent, ReactNode } from "react";
 
 import { ItemTagsEditor, type TagOption } from "@/components/items/ItemTagsEditor";
 import { NotesReview } from "@/components/items/NotesReview";
@@ -72,7 +72,72 @@ const PRIORITY_OPTIONS = [
 // handleCancel explicitly reverts it, since a controlled value (unlike the
 // uncontrolled status/rating/priority/notes/review inputs) wouldn't
 // otherwise revert to the pre-edit selection when re-entering edit mode.
-export function ItemEditForm({
+//
+// Follow-up layout change (after 6ef579d's two-column page.tsx): the
+// human user asked for Status/Rating/actions/Added-date/Tags to sit in the
+// LEFT column (with Cover/Links/Attachments) while Notes/Review sit alone
+// in the RIGHT column. Since all of that used to be one unified render tree
+// owned by a single component instance, and page.tsx needs to place the two
+// halves in two physically separate DOM locations while still sharing one
+// isEditing/tags/etc. state, this file is split three ways instead of one:
+//   - `ItemEditFormProvider` owns every bit of state/handler logic this
+//     component always had (100% unchanged), and exposes it via context.
+//     It renders no DOM of its own -- just passes `children` through -- so
+//     wrapping page.tsx's whole two-column grid in it has no layout effect.
+//   - `ItemEditFormPrimary` (rendered in page.tsx's left column) renders the
+//     status/rating/priority badges + Edit/Delete + delete-confirm + Added/
+//     Completed dates + Tags in view mode -- and, when isEditing is true,
+//     the *entire* edit-mode form (status/rating/priority/subtype inputs,
+//     dates+tags, notes/review textareas, save/cancel/nudge), unchanged
+//     from before. Edit mode isn't part of this layout request, so it isn't
+//     split across columns -- it still renders as the one unified block it
+//     always was, just now from within the left-column consumer.
+//   - `ItemEditFormNotesReview` (rendered in page.tsx's right column) shows
+//     the read-only Notes/Review view when not editing, and renders nothing
+//     while editing (its fields are part of the single form already
+//     rendered by ItemEditFormPrimary above).
+type ItemEditFormContextValue = {
+  notes: string | null;
+  review: string | null;
+  isEditing: boolean;
+  status: ItemStatus;
+  rating: number | null;
+  priority: PriorityLevel | null;
+  categoryId: string;
+  subtypeId: string;
+  setSubtypeId: (subtypeId: string) => void;
+  subtypeOptions: SubtypeChoice[];
+  handleSubtypeCreated: (subtype: SubtypeChoice) => void;
+  showDeleteConfirm: boolean;
+  setShowDeleteConfirm: (value: boolean) => void;
+  deleteState: { error?: string | null };
+  deleteFormAction: (payload: FormData) => void;
+  isDeleting: boolean;
+  handleEdit: () => void;
+  handleCancel: () => void;
+  handleSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  submitWithStatus: (targetStatus: ItemStatus | null) => void;
+  formRef: React.RefObject<HTMLFormElement | null>;
+  formAction: (payload: FormData) => void;
+  isPending: boolean;
+  formError?: string | null;
+  fieldErrors: Record<string, string>;
+  showNudge: boolean;
+  renderDatesAndTags: () => ReactNode;
+};
+
+const ItemEditFormContext = createContext<ItemEditFormContextValue | null>(null);
+
+function useItemEditFormContext(componentName: string): ItemEditFormContextValue {
+  const ctx = useContext(ItemEditFormContext);
+  if (!ctx) {
+    throw new Error(`${componentName} must be rendered inside an ItemEditFormProvider`);
+  }
+  return ctx;
+}
+
+export function ItemEditFormProvider({
+  children,
   itemId,
   status,
   rating,
@@ -87,6 +152,7 @@ export function ItemEditForm({
   tags: initialTags,
   tagSuggestions,
 }: {
+  children: ReactNode;
   itemId: string;
   status: ItemStatus;
   rating: number | null;
@@ -265,6 +331,74 @@ export function ItemEditForm({
     );
   }
 
+  const value: ItemEditFormContextValue = {
+    notes,
+    review,
+    isEditing,
+    status,
+    rating,
+    priority,
+    categoryId,
+    subtypeId,
+    setSubtypeId,
+    subtypeOptions,
+    handleSubtypeCreated,
+    showDeleteConfirm,
+    setShowDeleteConfirm,
+    deleteState,
+    deleteFormAction,
+    isDeleting,
+    handleEdit,
+    handleCancel,
+    handleSubmit,
+    submitWithStatus,
+    formRef,
+    formAction,
+    isPending,
+    formError: state.formError,
+    fieldErrors,
+    showNudge,
+    renderDatesAndTags,
+  };
+
+  return <ItemEditFormContext.Provider value={value}>{children}</ItemEditFormContext.Provider>;
+}
+
+// Left column: status/rating/priority badges, Edit/Delete, Added/Completed
+// dates, Tags -- and, when isEditing, the entire edit form (unsplit; see
+// this file's header comment for why edit mode isn't divided across
+// columns).
+export function ItemEditFormPrimary() {
+  const {
+    isEditing,
+    status,
+    rating,
+    priority,
+    handleEdit,
+    showDeleteConfirm,
+    setShowDeleteConfirm,
+    deleteState,
+    deleteFormAction,
+    isDeleting,
+    renderDatesAndTags,
+    categoryId,
+    subtypeId,
+    setSubtypeId,
+    subtypeOptions,
+    handleSubtypeCreated,
+    notes,
+    review,
+    fieldErrors,
+    formRef,
+    formAction,
+    handleSubmit,
+    formError,
+    showNudge,
+    submitWithStatus,
+    handleCancel,
+    isPending,
+  } = useItemEditFormContext("ItemEditFormPrimary");
+
   if (!isEditing) {
     return (
       <div className="flex flex-col gap-6">
@@ -291,8 +425,6 @@ export function ItemEditForm({
           </div>
           {renderDatesAndTags()}
         </div>
-
-        <NotesReview notes={notes} review={review} />
 
         {showDeleteConfirm ? (
           <div className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4">
@@ -329,9 +461,9 @@ export function ItemEditForm({
       noValidate
       className="flex flex-col gap-5"
     >
-      {state.formError ? (
+      {formError ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-          {state.formError}
+          {formError}
         </p>
       ) : null}
 
@@ -467,4 +599,15 @@ export function ItemEditForm({
       )}
     </form>
   );
+}
+
+// Right column: Notes/Review view only. Renders nothing while isEditing --
+// the Notes/Review textareas are part of the single edit form rendered by
+// ItemEditFormPrimary above.
+export function ItemEditFormNotesReview() {
+  const { isEditing, notes, review } = useItemEditFormContext("ItemEditFormNotesReview");
+  if (isEditing) {
+    return null;
+  }
+  return <NotesReview notes={notes} review={review} />;
 }

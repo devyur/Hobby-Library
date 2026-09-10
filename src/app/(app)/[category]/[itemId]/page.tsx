@@ -8,7 +8,11 @@ import { getSubtypes } from "@/lib/queries/subtypes";
 import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
 
-import { ItemEditForm } from "./ItemEditForm";
+import {
+  ItemEditFormNotesReview,
+  ItemEditFormPrimary,
+  ItemEditFormProvider,
+} from "./ItemEditForm";
 
 // Item detail page (issue #13, view mode; issue #16 adds the inline
 // edit-mode toggle for status/rating/priority/notes/review via
@@ -86,54 +90,68 @@ export default async function ItemDetailPage({
         </p>
       </div>
 
-      {/* Two-column on wider viewports: cover stays at its current width in
-          a left column, everything else moves into a right column beside
-          it instead of stacking in one full-width column below the cover
-          (which left a large empty gap next to the narrow cover). Collapses
-          to a single stacked column below md, matching NavShell.tsx's
-          shell breakpoint, since the mobile/responsive pass (#31) hasn't
-          touched this page yet. */}
-      <div className="flex flex-col gap-8 md:grid md:grid-cols-[14rem_1fr] md:items-start">
-        <div className="w-full shrink-0">
-          <CoverUploadControl itemId={item.id} coverUrl={item.coverUrl} title={item.title} />
+      {/* Two-column on wider viewports: cover, status/rating/actions, Added
+          date, Tags, Links, and Attachments stack in a left column; Notes
+          and Review sit alone in a right column (follow-up UI adjustment
+          after 6ef579d's initial two-column pass, per the human user's
+          visual QA on that layout -- the earlier arrangement put
+          status/rating/actions/dates/tags at the top of the right column,
+          ahead of Notes/Review, leaving the left column just the cover).
+          Collapses to a single stacked column below md -- cover and
+          primary status/actions near the top, Links/Attachments/Notes/
+          Review after -- matching NavShell.tsx's shell breakpoint, since
+          the mobile/responsive pass (#31) hasn't touched this page yet.
+          ItemEditFormProvider wraps the whole grid and renders no DOM of
+          its own (see ItemEditForm.tsx's header comment) -- it just shares
+          isEditing/tags/etc. state between the two consumers placed below,
+          in the left and right columns respectively. */}
+      <ItemEditFormProvider
+        itemId={item.id}
+        status={item.status}
+        rating={item.rating}
+        priority={item.priority}
+        notes={item.notes}
+        review={item.review}
+        createdAt={item.createdAt}
+        completedAt={item.completedAt}
+        categoryId={item.categoryId}
+        subtypeId={item.subtypeId}
+        subtypeOptions={subtypeOptions}
+        tags={item.tags}
+        tagSuggestions={tagSuggestions}
+      >
+        <div className="flex flex-col gap-8 md:grid md:grid-cols-[14rem_1fr] md:items-start">
+          <div className="flex flex-col gap-8">
+            <div className="w-full shrink-0">
+              <CoverUploadControl itemId={item.id} coverUrl={item.coverUrl} title={item.title} />
+            </div>
+
+            {/* Status/rating/priority badges, Edit/Delete, Added/Completed
+                dates, and Tags -- view mode by default, toggled into an
+                edit form in place (issue #16). Detail page never truncates
+                tags -- maxVisible = the full tag count, unlike the library
+                view's default-3 "+N" behavior. */}
+            <ItemEditFormPrimary />
+
+            {/* Always interactive, independent of ItemEditForm's Edit/Save
+                toggle (issue #20) -- same #17/ItemTagsEditor precedent. Owns
+                its own local links state (see the component's header comment
+                for why that's safe here, unlike ItemTagsEditor). */}
+            <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
+
+            {/* Always interactive, independent of ItemEditForm's Edit/Save
+                toggle (issue #21) -- same ItemLinksEditor precedent. Owns its
+                own local attachments state, seeded from the server-rendered
+                item.attachments, for the same "never unmounted by page.tsx"
+                reason ItemLinksEditor documents. */}
+            <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
+          </div>
+
+          <div className="flex flex-col gap-8">
+            <ItemEditFormNotesReview />
+          </div>
         </div>
-
-        <div className="flex flex-col gap-8">
-          {/* Status/rating/priority/notes/review, plus the Added/Completed
-              dates and Tags that sit alongside them -- view mode by
-              default, toggled into an edit form in place (issue #16).
-              Detail page never truncates tags -- maxVisible = the full tag
-              count, unlike the library view's default-3 "+N" behavior. */}
-          <ItemEditForm
-            itemId={item.id}
-            status={item.status}
-            rating={item.rating}
-            priority={item.priority}
-            notes={item.notes}
-            review={item.review}
-            createdAt={item.createdAt}
-            completedAt={item.completedAt}
-            categoryId={item.categoryId}
-            subtypeId={item.subtypeId}
-            subtypeOptions={subtypeOptions}
-            tags={item.tags}
-            tagSuggestions={tagSuggestions}
-          />
-
-          {/* Always interactive, independent of ItemEditForm's Edit/Save
-              toggle (issue #20) -- same #17/ItemTagsEditor precedent. Owns
-              its own local links state (see the component's header comment
-              for why that's safe here, unlike ItemTagsEditor). */}
-          <ItemLinksEditor itemId={item.id} initialLinks={item.links} />
-
-          {/* Always interactive, independent of ItemEditForm's Edit/Save
-              toggle (issue #21) -- same ItemLinksEditor precedent. Owns its
-              own local attachments state, seeded from the server-rendered
-              item.attachments, for the same "never unmounted by page.tsx"
-              reason ItemLinksEditor documents. */}
-          <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
-        </div>
-      </div>
+      </ItemEditFormProvider>
     </div>
   );
 }
