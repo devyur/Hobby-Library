@@ -45,6 +45,7 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 - `lib/queries/` — reusable read queries (`items.ts`, `dashboard.ts`, `export.ts`, `trash.ts`, `lists.ts`, `categories.ts`, `subtypes.ts`, `tags.ts`)
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
 - `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
+- `lib/images/` — browser-only image processing (`resizeCoverImage.ts`, #37): resizes a cover to ~800px on its long edge and re-encodes to WebP via Canvas/`OffscreenCanvas` before upload, no new dependency
 
 `src/middleware.ts` — Next.js middleware, used for Supabase session refresh on each request (standard requirement for Supabase SSR auth).
 
