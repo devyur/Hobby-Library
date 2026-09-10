@@ -57,8 +57,14 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const isPublic = PUBLIC_PATHS.has(request.nextUrl.pathname);
+  // API Route Handlers (issue #29's /api/export, the project's first) own
+  // their own auth response (401 JSON, not a redirect) -- an HTML redirect
+  // to /login here would otherwise intercept every unauthenticated request
+  // before the route handler ever runs, which is wrong for a fetch/download
+  // caller expecting a real status code rather than a 200 login page.
+  const isApiRoute = request.nextUrl.pathname.startsWith("/api/");
 
-  if (!user && !isPublic) {
+  if (!user && !isPublic && !isApiRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.search = "";

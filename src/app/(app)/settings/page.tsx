@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 import { createClient } from "@/lib/supabase/server";
 import { logoutAction } from "@/lib/actions/auth";
@@ -39,6 +40,21 @@ export default async function SettingsPage() {
       <section className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4">
         <p className="text-sm text-text-secondary">Theme</p>
         <ThemeToggle />
+      </section>
+
+      <section className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4">
+        <div>
+          <p className="text-sm text-text-secondary">Export</p>
+          <p className="text-sm text-text-primary">Download your entire library as JSON</p>
+        </div>
+        {/* Link to the Route Handler (issue #29) -- next/link (not a plain
+            <a>) per this project's lint config, but it's still a real
+            navigation to /api/export: the browser's own download handling
+            (Content-Disposition on the response) is sufficient for a single
+            JSON file, no progress/confirmation UI. */}
+        <Button asChild variant="outline">
+          <Link href="/api/export">Export</Link>
+        </Button>
       </section>
     </div>
   );
