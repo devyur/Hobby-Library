@@ -1,0 +1,63 @@
+name: Supabase keep-alive
+
+# Free-tier Supabase projects auto-pause after ~7 days with no API activity
+# (see _docs/plan.md's tech-stack section). This pings the project daily —
+# comfortably under that threshold — using only the already-public
+# NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (the same values
+# shipped in every browser bundle), so no repo secret is required. They're
+# passed as repository variables (Settings > Secrets and variables >
+# Actions > Variables) rather than secrets, since they're already public.
+#
+# The ping targets `categories` via PostgREST. That table only grants
+# SELECT to the `authenticated` role (see
+# supabase/migrations/20260908123222_create_reference_tables.sql), so the
+# anon/publishable key gets a 401 "permission denied" back — but that
+# response comes from Postgres itself via PostgREST, proving the request
+# reached the database, which is what resets the inactivity clock. Any
+# response (2xx or a well-formed 4xx from Supabase) counts as success; only
+# a network-level failure (no response at all) fails the job.
+
+on:
+  schedule:
+    # Daily at 06:00 UTC.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY repo variables are not set."
+            exit 1
+          fi
+
+          http_status=$(curl -sS \
+            --max-time 15 \
+            -o /tmp/response.json \
+            -w "%{http_code}" \
+            "${SUPABASE_URL}/rest/v1/categories?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+          curl_exit=$?
+
+          echo "HTTP status: ${http_status}"
+          cat /tmp/response.json
+          echo
+
+          if [ "$curl_exit" -ne 0 ]; then
+            echo "::error::curl failed to reach Supabase (exit code ${curl_exit})."
+            exit 1
+          fi
+
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 600 ]; then
+            echo "::error::Unexpected/no HTTP status from Supabase (${http_status})."
+            exit 1
+          fi
+
+          echo "Reached Supabase project API — activity recorded."
