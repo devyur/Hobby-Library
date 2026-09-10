@@ -1,12 +1,12 @@
 "use client";
 
-import { useActionState, useId, useRef, useState } from "react";
+import { useActionState, useId, useRef, useState, useTransition } from "react";
 import type { ChangeEvent } from "react";
 
 import { CoverThumbnail } from "@/components/items/CoverThumbnail";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { uploadCoverAction } from "@/lib/actions/covers";
+import { removeCoverAction, uploadCoverAction } from "@/lib/actions/covers";
 import {
   COVER_SIZE_ERROR,
   COVER_TYPE_ERROR,
@@ -20,9 +20,11 @@ import {
 // page's CoverThumbnail spot (src/app/(app)/[category]/[itemId]/page.tsx)
 // rather than inside ItemEditForm.tsx: that file's own header comment says
 // cover stays "never editable" per #16's Out of scope -- this issue is what
-// finally changes that, but only here, not there. Removing a cover entirely
-// is out of scope (filed as #35) -- there is deliberately no "remove"
-// control, only upload/replace.
+// finally changes that, but only here, not there. A "Remove cover" button
+// (issue #35) sits alongside Replace, shown only when the item currently
+// has a cover -- instant on click, no confirmation step, since a removed
+// cover is trivially recoverable by re-uploading (unlike Trash's permanent
+// delete, which does confirm).
 //
 // Same client-pre-check + server-re-check split every other form in this
 // project already follows: the immediate type/size check in handleChange is
@@ -58,6 +60,27 @@ export function CoverUploadControl({
   const inputId = useId();
   const errorId = useId();
 
+  // Remove cover (issue #35) -- no FormData to carry (just the item id
+  // already in scope), so this is a plain useTransition + direct-call pair
+  // like ItemTagsEditor.tsx, not a second <form>/useActionState. On success
+  // removeCoverAction redirects server-side (throws, navigates away), so
+  // this callback only ever resumes on the error path.
+  const [isRemoving, startRemoveTransition] = useTransition();
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  function handleRemove() {
+    setClientError(null);
+    setRemoveError(null);
+    startRemoveTransition(async () => {
+      const result = await removeCoverAction(itemId);
+      if (result.error) {
+        setRemoveError(result.error);
+      }
+    });
+  }
+
+  const busy = isPending || isRemoving;
+
   function handleChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -79,9 +102,11 @@ export function CoverUploadControl({
 
   // A rejected client-side check takes priority (it's about the file the
   // user just picked, more relevant than a stale server error from a
-  // previous attempt); state.error is what's left once a submission
-  // actually reached the server.
-  const error = clientError ?? state.error;
+  // previous attempt); state.error/removeError are what's left once a
+  // submission actually reached the server -- either action's error can
+  // occupy this same slot, since only one can ever be in flight at once
+  // (`busy` disables both buttons while the other is pending).
+  const error = clientError ?? state.error ?? removeError;
 
   return (
     <div className="flex flex-col gap-2">
@@ -89,32 +114,49 @@ export function CoverUploadControl({
           cover yet -- see CoverThumbnail's own header comment. */}
       <CoverThumbnail coverUrl={coverUrl} title={title} hideWhenEmpty />
 
-      <form ref={formRef} action={formAction}>
-        <Label htmlFor={inputId} className="sr-only">
-          Cover image
-        </Label>
-        <input
-          ref={inputRef}
-          id={inputId}
-          name="cover"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onChange={handleChange}
-          disabled={isPending}
-          aria-invalid={!!error}
-          aria-describedby={error ? errorId : undefined}
-          className="hidden"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={isPending}
-          onClick={() => inputRef.current?.click()}
-        >
-          {isPending ? "Uploading…" : coverUrl ? "Replace cover" : "Upload cover"}
-        </Button>
-      </form>
+      <div className="flex flex-wrap items-center gap-2">
+        <form ref={formRef} action={formAction}>
+          <Label htmlFor={inputId} className="sr-only">
+            Cover image
+          </Label>
+          <input
+            ref={inputRef}
+            id={inputId}
+            name="cover"
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            onChange={handleChange}
+            disabled={busy}
+            aria-invalid={!!error}
+            aria-describedby={error ? errorId : undefined}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={() => inputRef.current?.click()}
+          >
+            {isPending ? "Uploading…" : coverUrl ? "Replace cover" : "Upload cover"}
+          </Button>
+        </form>
+
+        {/* Shown only when the item currently has a cover -- there's
+            nothing to remove otherwise, same condition Replace vs. Upload's
+            label already switches on. */}
+        {coverUrl ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy}
+            onClick={handleRemove}
+          >
+            {isRemoving ? "Removing…" : "Remove cover"}
+          </Button>
+        ) : null}
+      </div>
 
       {error ? (
         <p id={errorId} role="alert" className="text-sm text-red-600 dark:text-red-400">

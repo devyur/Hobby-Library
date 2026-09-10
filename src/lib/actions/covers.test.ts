@@ -23,7 +23,7 @@ vi.mock("next/navigation", () => ({
   redirect: (...args: [string]) => redirectMock(...args),
 }));
 
-const { uploadCoverAction } = await import("./covers");
+const { removeCoverAction, uploadCoverAction } = await import("./covers");
 const { initialUploadCoverState } = await import("@/lib/validation/covers");
 
 type FakeRow = Record<string, unknown> | null;
@@ -35,6 +35,8 @@ function fakeSupabase(options: {
   existingCover?: FakeRow;
   uploadError?: { message: string } | null;
   insertError?: { message: string } | null;
+  removeStorageError?: { message: string } | null;
+  deleteRowError?: { message: string } | null;
 }) {
   const uploadMock = vi.fn(
     async (
@@ -51,11 +53,27 @@ function fakeSupabase(options: {
       };
     },
   );
+  const removeMock = vi.fn(async (paths: string[]) => {
+    void paths;
+    return {
+      data: options.removeStorageError ? null : [{}],
+      error: options.removeStorageError ?? null,
+    };
+  });
   const itemImagesInsertMock = vi.fn(() => ({
     // insert() itself is the terminal call here (no .select().single()
     // chained in the action) -- resolved directly as a promise-like.
     then: (resolve: (v: { error: unknown }) => void) =>
       resolve({ error: options.insertError ?? null }),
+  }));
+  const itemImagesDeleteMock = vi.fn(() => ({
+    eq: () => ({
+      // .delete().eq("id", ...) itself is the terminal call in
+      // removeCoverAction -- resolved directly as a promise-like, same
+      // shape as itemImagesInsertMock above.
+      then: (resolve: (v: { error: unknown }) => void) =>
+        resolve({ error: options.deleteRowError ?? null }),
+    }),
   }));
 
   const fromMock = vi.fn((table: string) => {
@@ -87,6 +105,7 @@ function fakeSupabase(options: {
           }),
         }),
         insert: itemImagesInsertMock,
+        delete: itemImagesDeleteMock,
       };
     }
     throw new Error(`Unexpected table in test: ${table}`);
@@ -94,10 +113,12 @@ function fakeSupabase(options: {
 
   return {
     from: fromMock,
-    storage: { from: vi.fn(() => ({ upload: uploadMock })) },
+    storage: { from: vi.fn(() => ({ upload: uploadMock, remove: removeMock })) },
     auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
     uploadMock,
+    removeMock,
     itemImagesInsertMock,
+    itemImagesDeleteMock,
   };
 }
 
@@ -259,5 +280,111 @@ describe("uploadCoverAction", () => {
     expect(result.error).toMatch(/failed to upload/i);
     expect(supabase.itemImagesInsertMock).not.toHaveBeenCalled();
     expect(redirectMock).not.toHaveBeenCalled();
+  });
+});
+
+// Unit coverage for removeCoverAction (issue #35), focused on what e2e
+// coverage (a live browser flow) can't directly inspect: storage-then-row
+// deletion ordering, that a storage failure leaves the item_images row
+// untouched, and that a missing cover row is a harmless no-op rather than
+// an error -- same "mock the Supabase chain, assert call order/counts"
+// approach as the uploadCoverAction suite above.
+describe("removeCoverAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    redirectMock.mockClear();
+  });
+
+  it("rejects an unauthenticated request without touching storage or the database", async () => {
+    const supabase = fakeSupabase({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await removeCoverAction("item-1");
+
+    expect(result.error).toMatch(/signed in/i);
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(supabase.removeMock).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one -- rejected before storage.remove is ever called", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: null, // .eq("user_id", user.id) excludes another user's row
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await removeCoverAction("someone-elses-item");
+
+    expect(result.error).toMatch(/could not be found/i);
+    expect(supabase.removeMock).not.toHaveBeenCalled();
+  });
+
+  it("removes the storage object then the item_images row, in that order, then redirects", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      existingCover: { id: "image-1", storage_path: "user-1/item-1/cover" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(removeCoverAction("item-1")).rejects.toThrow("REDIRECT:/games/item-1");
+
+    expect(supabase.removeMock).toHaveBeenCalledTimes(1);
+    expect(supabase.removeMock).toHaveBeenCalledWith(["user-1/item-1/cover"]);
+    expect(supabase.itemImagesDeleteMock).toHaveBeenCalledTimes(1);
+
+    const removeOrder = supabase.removeMock.mock.invocationCallOrder[0];
+    const deleteOrder = supabase.itemImagesDeleteMock.mock.invocationCallOrder[0];
+    expect(removeOrder).toBeLessThan(deleteOrder);
+  });
+
+  it("a storage removal failure returns a clean error and never deletes the item_images row (no dangling-row risk)", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      existingCover: { id: "image-1", storage_path: "user-1/item-1/cover" },
+      removeStorageError: { message: "storage exploded" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await removeCoverAction("item-1");
+
+    expect(result.error).toMatch(/failed to remove/i);
+    expect(supabase.itemImagesDeleteMock).not.toHaveBeenCalled();
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("an item_images row delete failure (after a successful storage removal) returns a clean error, not a partial success", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      existingCover: { id: "image-1", storage_path: "user-1/item-1/cover" },
+      deleteRowError: { message: "row delete exploded" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await removeCoverAction("item-1");
+
+    expect(result.error).toMatch(/failed to remove/i);
+    expect(supabase.removeMock).toHaveBeenCalledTimes(1);
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("no existing cover row is a harmless no-op -- never calls storage.remove or item_images.delete, still redirects", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      existingCover: null,
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    await expect(removeCoverAction("item-1")).rejects.toThrow("REDIRECT:/games/item-1");
+
+    expect(supabase.removeMock).not.toHaveBeenCalled();
+    expect(supabase.itemImagesDeleteMock).not.toHaveBeenCalled();
   });
 });

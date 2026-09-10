@@ -139,3 +139,97 @@ export async function uploadCoverAction(
   // automatically, with no other read-side change needed.
   redirect(`/${category.slug}/${itemId}`);
 }
+
+// Server Action backing CoverUploadControl.tsx's "Remove cover" button
+// (issue #35). Takes only the item id -- unlike uploadCoverAction, there's
+// no file/FormData to carry, so this is called directly (via
+// startTransition, not a real <form>/useActionState pair), same itemId-arg
+// shape as restoreItemAction (lib/actions/trash.ts) and
+// removeAttachmentAction (lib/actions/attachments.ts). Instant, no
+// confirmation step (#35's own acceptance criteria): a removed cover is
+// trivially recoverable by uploading a new one, unlike Trash's permanent
+// delete.
+//
+// Ownership + ordering both mirror established precedent rather than
+// inventing a new shape:
+// - The `.eq("id", itemId).eq("user_id", user.id).is("deleted_at", null)`
+//   existence/ownership check against `items` is copied verbatim from
+//   uploadCoverAction above -- never relies on the covers_delete_own
+//   storage policy (path-scoped only, doesn't know an item exists or is
+//   owned by the caller) as the sole gate.
+// - Storage-object-then-item_images-row deletion, in that order, is
+//   removeAttachmentAction's exact ordering: if storage.remove() fails,
+//   this returns early and the item_images row (still pointing at a real
+//   object) is left untouched -- no dangling row claiming a cover exists
+//   that isn't there. If storage succeeds but the row delete then fails,
+//   a retry self-heals (storage.remove() on an already-removed path is a
+//   no-op, not an error).
+// - No existing is_cover=true row (already removed, or never had one --
+//   e.g. a stale UI state) is a harmless no-op per #35's acceptance
+//   criteria: skip straight to the redirect below without touching storage
+//   or item_images at all, same "empty is success, not failure" reasoning
+//   clearStorageFolder (lib/actions/trash.ts) uses for an empty folder.
+export async function removeCoverAction(
+  itemId: string,
+): Promise<UploadCoverActionState> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // request to /login before this action is ever reachable.
+    return { error: "You must be signed in to remove a cover." };
+  }
+
+  const { data: item } = await supabase
+    .from("items")
+    .select("id, category_id")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { error: "This item could not be found." };
+  }
+
+  const { data: category } = await supabase
+    .from("categories")
+    .select("slug")
+    .eq("id", item.category_id)
+    .maybeSingle();
+  if (!category) {
+    return { error: "This item could not be found." };
+  }
+
+  const { data: existingCover } = await supabase
+    .from("item_images")
+    .select("id, storage_path")
+    .eq("item_id", itemId)
+    .eq("is_cover", true)
+    .maybeSingle();
+
+  if (existingCover) {
+    const { error: storageError } = await supabase.storage
+      .from("covers")
+      .remove([existingCover.storage_path]);
+    if (storageError) {
+      return { error: "Failed to remove cover image. Please try again." };
+    }
+
+    const { error: deleteError } = await supabase
+      .from("item_images")
+      .delete()
+      .eq("id", existingCover.id);
+    if (deleteError) {
+      return { error: "Failed to remove cover image. Please try again." };
+    }
+  }
+
+  // Same redirect target/purpose as uploadCoverAction's -- forces a fresh
+  // server re-render so coverUrl resolves to null, CoverThumbnail falls
+  // back to its hidden/no-cover state, and the button reverts to reading
+  // "Upload cover", on both the detail page and (next load) Card view.
+  redirect(`/${category.slug}/${itemId}`);
+}
