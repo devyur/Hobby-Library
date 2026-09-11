@@ -53,9 +53,17 @@ export default async function SettingsPage() {
             navigation to /api/export: the browser's own download handling
             (Content-Disposition on the response) is sufficient for a single
             JSON file, no progress/confirmation UI. */}
-        <Button asChild variant="outline">
-          <Link href="/api/export">Export</Link>
-        </Button>
+        <div className="flex gap-2">
+          <Button asChild variant="outline">
+            <Link href="/api/export">Export</Link>
+          </Button>
+          {/* CSV export (issue #45) -- same route, `?format=csv` branch,
+              same no-progress-UI reasoning as the JSON button above. Labeled
+              distinctly so the two downloads aren't confused. */}
+          <Button asChild variant="outline">
+            <Link href="/api/export?format=csv">Export CSV</Link>
+          </Button>
+        </div>
       </section>
 
       <section className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4">
