@@ -26,8 +26,8 @@ Target: Next.js (App Router) + TypeScript + Tailwind + Supabase. No code yet —
 
 **Decision:** split between generic reusable primitives and domain-specific components, rather than one flat folder or one folder per page:
 - `components/ui/` — generic primitives (Button, Card, Modal, Input, Badge…). Sourced from **shadcn/ui** (Tailwind-based, copied into the repo rather than pulled in as an opaque dependency, so components stay fully editable and there's no library lock-in).
-- `components/items/` — item-specific UI (ItemCard, ItemListRow, ItemForm, StatusBadge, RatingStars, `ItemListsEditor.tsx` — the item detail page's add/remove-from-list shortcut, #41…)
-- `components/dashboard/` — stat tiles, charts (`LibraryStats.tsx`, `CompletionTrends.tsx`, `RecommendationsSection.tsx` + `RecommendationsPanel.tsx`, from #27/#28/#44)
+- `components/items/` — item-specific UI (ItemCard, ItemListRow, ItemForm, StatusBadge, RatingStars, `ItemListsEditor.tsx` — the item detail page's add/remove-from-list shortcut, #41…). `NotesReview.tsx` (#48) is now two always-interactive editors mirroring `ItemTagsEditor.tsx` (#17)'s shape — CTA→inline-textarea when empty, own immediate Server Action save each — rather than fields inside `ItemEditForm.tsx`'s shared Edit/Save toggle.
+- `components/dashboard/` — stat tiles, charts (`LibraryStats.tsx`, `CompletionTrends.tsx`, `RecommendationsSection.tsx` + `RecommendationsPanel.tsx`, from #27/#28/#44). `LibraryStats.tsx` takes a `categoryId`/`showCategoryBreakdown` prop pair (#50) so the same component renders both the account-wide Dashboard and the new per-category drill-down.
 - `components/lists/` — custom list UI (#26), including drag-reordering via `@dnd-kit` (#42)
 - `components/nav/` — the main nav shell, which renders its tabs **dynamically from the `categories` table** (per the earlier decision)
 - `components/settings/` — Settings-page-specific UI (`ImportLibraryForm.tsx`, from #30)
@@ -41,8 +41,8 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 - `lib/supabase/client.ts` — browser Supabase client
 - `lib/supabase/server.ts` — server-side Supabase client (Server Components/Actions need a distinct client because of cookie-based session handling)
 - `lib/supabase/types.ts` — DB types generated from the live Supabase schema (`supabase gen types typescript`), regenerated whenever the schema changes — keeps queries type-safe without hand-maintained types drifting from the DB. Regenerating via the literal CLI requires either Docker/Podman on `PATH` (for `--db-url`) or a Supabase personal access token via `SUPABASE_ACCESS_TOKEN` (for `--linked`/`--project-id`). In an environment with neither (e.g. a Docker-less sandbox with no PAT configured), `@supabase/postgrest-typegen` — the same introspection/codegen engine the CLI wraps — run directly against the live schema is the accepted fallback, provided the resulting file's header documents which tool generated it and why the literal CLI wasn't used. See [#7](https://github.com/devyur/Hobby-Library/issues/7) for the decision record.
-- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, `trash.ts`, `lists.ts`, `import.ts`, `recommendations.ts` — dismiss/undismiss/reroll, #44)
-- `lib/queries/` — reusable read queries (`items.ts`, `dashboard.ts`, `export.ts`, `exportCsv.ts`, `trash.ts`, `lists.ts`, `categories.ts`, `subtypes.ts`, `tags.ts`, `sortDirection.ts`). `sortDirection.ts` (#39) is a dependency-free module by necessity, not style — `LibraryView.tsx` (a client component) importing sort-direction types/helpers from `items.ts` directly was pulling that file's server-only `next/headers` import into the client bundle and breaking the build; `items.ts` re-exports everything from it so other server-side callers are unaffected. `exportCsv.ts` (#45) is likewise dependency-free by design, not just convention — `buildExportCsv(data: ExportData)` is a pure function over `export.ts`'s already-assembled data, with zero Supabase imports, so CSV formatting stays fully isolated from JSON export's assembly logic and easy to revert independently if unused.
+- `lib/actions/` — Server Actions grouped by domain (`auth.ts`, `items.ts`, `preferences.ts`, `tags.ts`, `subtypes.ts`, `covers.ts`, `links.ts`, `attachments.ts`, `trash.ts`, `lists.ts`, `import.ts`, `recommendations.ts` — dismiss/undismiss/reroll, #44). `items.ts` gained `updateNotesAction`/`updateReviewAction`/`markItemCompletedAction` (#48) — Notes/Review each save independently of `updateItemAction`, whose payload no longer touches either field; Review's own empty→filled "suggest marking Completed" check runs server-side, inside `updateReviewAction`, against freshly-read DB state (a check-after-save, since it can be triggered without the main Edit form open) — distinct from rating's existing block-before-save nudge, which stays in the main form's submit.
+- `lib/queries/` — reusable read queries (`items.ts`, `dashboard.ts`, `export.ts`, `exportCsv.ts`, `trash.ts`, `lists.ts`, `categories.ts`, `subtypes.ts`, `tags.ts`, `sortDirection.ts`). `sortDirection.ts` (#39) is a dependency-free module by necessity, not style — `LibraryView.tsx` (a client component) importing sort-direction types/helpers from `items.ts` directly was pulling that file's server-only `next/headers` import into the client bundle and breaking the build; `items.ts` re-exports everything from it so other server-side callers are unaffected. `exportCsv.ts` (#45) is likewise dependency-free by design, not just convention — `buildExportCsv(data: ExportData)` is a pure function over `export.ts`'s already-assembled data, with zero Supabase imports, so CSV formatting stays fully isolated from JSON export's assembly logic and easy to revert independently if unused. `dashboard.ts` extracted a shared `buildDashboardStats()` helper (#50) so the account-wide `getDashboardData()` and the new category-scoped `getCategoryDashboardStats(categoryId)` compute stats identically, just filtered differently.
 - `lib/validation/` — form/input validation schemas (Zod), shared between client forms and server-side Action validation so validation logic isn't duplicated
 - `lib/constants.ts` — static lookups not worth a DB round-trip, e.g. status/priority display labels and colors
 - `lib/images/` — browser-only image processing (`resizeCoverImage.ts`, #37): resizes a cover to ~800px on its long edge and re-encodes to WebP via Canvas/`OffscreenCanvas` before upload, no new dependency
@@ -92,7 +92,9 @@ Hobby Library/
 │   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
 │   │   │   ├── layout.tsx              # nav shell (#10)
-│   │   │   ├── dashboard/page.tsx      # stats (#27) + completion trends (#27/#43) + recommendations (#28), interactive dismiss/shuffle (#44)
+│   │   │   ├── dashboard/
+│   │   │   │   ├── page.tsx            # stats (#27) + completion trends (#27/#43) + recommendations (#28), interactive dismiss/shuffle (#44)
+│   │   │   │   └── [category]/page.tsx # per-category stats drill-down (#50) — LibraryStats scoped by categoryId, no trends/recommendations
 │   │   │   ├── add/
 │   │   │   │   ├── page.tsx            # Full Add form (#14)
 │   │   │   │   └── AddItemForm.tsx
@@ -107,8 +109,8 @@ Hobby Library/
 │   │   │   ├── lists/
 │   │   │   │   ├── page.tsx            # create/rename/delete lists (#26)
 │   │   │   │   └── [listId]/page.tsx   # cross-category add/remove item picker (#26)
-│   │   │   ├── trash/page.tsx          # Restore + Permanent Delete (#25)
-│   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11) + Export/Import (#29/#30)
+│   │   │   ├── trash/page.tsx          # Restore + Permanent Delete (#25); entry point moved into Settings (#49), page itself unchanged
+│   │   │   └── settings/page.tsx       # email, logout, theme toggle (#11) + Export/Import (#29/#30) + Trash link (#49)
 │   │   ├── api/
 │   │   │   └── export/route.ts         # GET, JSON (#29) + ?format=csv (#45) download — the one Route Handler, per §1
 │   │   ├── layout.tsx                  # root layout

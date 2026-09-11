@@ -191,17 +191,17 @@ Description: Fixed via a new `LocalDate` client component (`src/components/ui/Lo
 Goal: Let a user paste an image from their clipboard as an item's cover, not just pick a file.
 Description: Shipped by extracting `CoverUploadControl.tsx`'s file-input pipeline into a shared `submitFile(File)`, reused by both the existing file input and a new `paste` handler (control is now a focusable paste zone with a visible hint). Non-image paste is a silent no-op; validation/resize/server action all unchanged.
 
-## 48. Always-interactive Notes/Review editing, with empty-state CTAs — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/48)
+## 48. Always-interactive Notes/Review editing, with empty-state CTAs — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/48) — done
 Goal: Let a user add/edit Notes and Review independently of the item's main Edit mode, with an inviting empty state instead of nothing when both are blank.
-Description: Requested by the user testing the live app. Brings Notes/Review in line with how Tags already works (always-interactive, no shared Edit/Save gate) — a real architectural change, not a bug fix. The #16 completion nudge's interaction with independently-saved Review needs an explicit decision during grooming.
+Description: Shipped: `NotesReview.tsx` is now two always-interactive editors (mirroring `ItemTagsEditor.tsx`), each with its own Server Action (`updateNotesAction`/`updateReviewAction`) and CTA→inline-textarea empty state; `updateItemAction` no longer touches notes/review at all. The #16 nudge split: rating's stays block-before-save (three-button banner) in the main form, Review's nudge is new — check-after-save inside `updateReviewAction` (computed against fresh DB state), two-button banner, via a new `markItemCompletedAction`.
 
-## 49. Move Trash link from main nav into Settings — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/49)
+## 49. Move Trash link from main nav into Settings — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/49) — done
 Goal: Relocate the Trash entry point out of the main nav into Settings, since it's used infrequently.
-Description: Requested by the user testing the live app. Pure navigation relocation — Trash's own page/functionality is unchanged.
+Description: Shipped: removed from `buildNavItems()` (`navItems.ts`), added as a new section on the Settings page. `/trash` itself and `last_screen` redirect behavior unchanged.
 
-## 50. Per-category Dashboard statistics view — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/50)
+## 50. Per-category Dashboard statistics view — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/50) — done
 Goal: Let a user drill into one category from the Dashboard to see library/stats/recently-added scoped to just that category, while trends/recommendations/continue stay account-wide.
-Description: Requested by the user testing the live app. #27 deliberately made the Dashboard account-wide by design — this is a genuine new feature needing its own entry-point/routing decision during grooming, not a quick tweak.
+Description: Shipped as a new route `/dashboard/[category]`, reusing `LibraryStats.tsx` (its own "Your library"/"Library statistics"/"Recently added" sections) via a new `categoryId`-filtered `getCategoryDashboardStats()`, sharing aggregation logic with the main Dashboard's query via an extracted `buildDashboardStats()` helper. CompletionTrends/RecommendationsSection are never rendered on this route. Entry point: the main Dashboard's Category breakdown tile rows now link here.
 
 ## 51. Investigate slow page navigation (3-5s per click) in production — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/51)
 Goal: Diagnose and fix why navigating the live production app takes 3-5s per click.
@@ -210,3 +210,7 @@ Description: Reported by the user testing the live app. Deliberately scoped as i
 ## 55. Live DB missing recommendation_dismissed_at column (#44 migration never applied) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/55) — done
 Goal: Fix the Dashboard's dismiss/shuffle Recommendations feature (#44), broken in production.
 Description: Found by QA verifying #45 — #44's migration (`20260911100000_add_items_recommendation_dismissed_at.sql`) was committed to the repo in a separate session but never pushed to the live Supabase database. Fixed by applying it directly via `supabase db push`; confirmed the remote DB is up to date with no pending migrations.
+
+## 56. Stale e2e assertion in dashboard-recommendations.spec.ts ("High-rated Planned") — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/56)
+Goal: Fix a pre-existing stale e2e test referencing a label #44 renamed before this test was ever updated.
+Description: Found by QA verifying #50 while sanity-checking an unrelated flakiness claim — `dashboard-recommendations.spec.ts` asserts `"High-rated Planned"`, a label #44 (`0c905ae`) replaced with "Recommended Planned." Predates #50; not caused by it.
