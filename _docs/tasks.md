@@ -175,21 +175,21 @@ Description: Discovered while grooming #26 — `list_items.sort_order` exists in
 Goal: Decide whether a consumption/library trends view (e.g. completions or additions over time) belongs in V1's Dashboard.
 Description: Discovered while grooming #27 — `plan.md` §14 lists this alongside #27's seven well-specified metrics but gives no timeframe, chart type, or definition, so #27 deliberately excluded it as too undefined to groom. Needs a product decision on scope before it can be groomed for engineering; may not be worth building for V1 given typical low weekly item-count.
 
-## 44. Smarter/interactive dashboard recommendations (dismiss, refresh, weighted ranking) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/44)
+## 44. Smarter/interactive dashboard recommendations (dismiss, refresh, weighted ranking) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/44) — done
 Goal: Let a user dismiss/refresh individual recommendations, or replace #28's four independent picks with a weighted ranking.
-Description: Discovered while grooming #28 — V1 ships four simple, independent picks with no per-item interaction or scoring, per `plan.md` §14's "recommendation logic should remain simple initially." Candidate improvements (dismiss/snooze, manual shuffle, weighted composite ranking) tracked here as a placeholder, not yet groomed.
+Description: Shipped: weighted "Recommended Planned" ranking, Shuffle, and per-item dismiss via `items.recommendation_dismissed_at` (`lib/actions/recommendations.ts`). Its migration was committed but not applied to the live DB until [#55](https://github.com/devyur/Hobby-Library/issues/55) caught and fixed the gap.
 
-## 45. CSV export (secondary format) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/45)
+## 45. CSV export (secondary format) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/45) — done
 Goal: Let a user download their library as CSV in addition to JSON.
-Description: Discovered while grooming #29 — `plan.md` §23/`database-schema.md` §8 both treat CSV as optional/secondary to JSON. #29 was scoped to JSON only since CSV needs its own product decision (one CSV per entity vs. a flattened items CSV vs. something else, and whether CSV round-trips through #30 at all) that doesn't have an obvious answer and isn't needed for #30's dependency on #29's JSON shape to stay unambiguous.
+Description: Shipped as a pure `buildExportCsv()` function (`src/lib/queries/exportCsv.ts`) derived from the same `ExportData` shape JSON export already assembles, RFC 4180 escaping/UTF-8 BOM/CRLF rows, export-only (no import round-trip). `GET /api/export?format=csv`; JSON path unchanged.
 
-## 46. Fix created_at hydration mismatch near local-midnight boundary — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/46)
+## 46. Fix created_at hydration mismatch near local-midnight boundary — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/46) — done
 Goal: Stop a real React hydration-mismatch error on the item detail page's "Added:" row when the server and viewer disagree on the calendar date near local midnight.
-Description: Discovered and independently reproduced twice by QA while verifying #34's timezone fix for `completed_at`. `created_at`/`deleted_at` are genuine timestamps correctly meant to display in local time (unlike `completed_at`, which needed UTC-forced formatting) — the bug is a rendering-correctness issue (server/client date disagreement near midnight), not a wrong-timezone issue. Likely fix: defer local-time formatting to a client-only render path instead of computing it during SSR.
+Description: Fixed via a new `LocalDate` client component (`src/components/ui/LocalDate.tsx`) that renders a UTC-forced placeholder for SSR/first paint, then swaps in the real local-time string post-mount via `useSyncExternalStore` (matching `ThemeToggle.tsx`'s existing pattern). Used by `ItemEditForm.tsx`'s "Added:" row and `TrashList.tsx`'s "Deleted" row; `LibraryStats.tsx` needed no change (pure Server Component, structurally immune).
 
-## 47. Upload cover image from clipboard paste — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/47)
+## 47. Upload cover image from clipboard paste — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/47) — done
 Goal: Let a user paste an image from their clipboard as an item's cover, not just pick a file.
-Description: Requested by the user testing the live app. A new input path into the existing upload pipeline (#19 validation, #37 resize/WebP) via a `paste` event listener — no new upload/validation logic.
+Description: Shipped by extracting `CoverUploadControl.tsx`'s file-input pipeline into a shared `submitFile(File)`, reused by both the existing file input and a new `paste` handler (control is now a focusable paste zone with a visible hint). Non-image paste is a silent no-op; validation/resize/server action all unchanged.
 
 ## 48. Always-interactive Notes/Review editing, with empty-state CTAs — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/48)
 Goal: Let a user add/edit Notes and Review independently of the item's main Edit mode, with an inviting empty state instead of nothing when both are blank.
@@ -206,3 +206,7 @@ Description: Requested by the user testing the live app. #27 deliberately made t
 ## 51. Investigate slow page navigation (3-5s per click) in production — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/51)
 Goal: Diagnose and fix why navigating the live production app takes 3-5s per click.
 Description: Reported by the user testing the live app. Deliberately scoped as investigation-first (profile via real timing data, check Vercel/Supabase region alignment and serverless cold-start behavior, check for unnecessarily sequential queries) rather than a guessed fix, since several independent causes are plausible given the architecture.
+
+## 55. Live DB missing recommendation_dismissed_at column (#44 migration never applied) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/55) — done
+Goal: Fix the Dashboard's dismiss/shuffle Recommendations feature (#44), broken in production.
+Description: Found by QA verifying #45 — #44's migration (`20260911100000_add_items_recommendation_dismissed_at.sql`) was committed to the repo in a separate session but never pushed to the live Supabase database. Fixed by applying it directly via `supabase db push`; confirmed the remote DB is up to date with no pending migrations.
