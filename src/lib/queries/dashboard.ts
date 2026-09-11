@@ -249,24 +249,27 @@ export async function getDashboardData(): Promise<DashboardData> {
 }
 
 // ---------------------------------------------------------------------------
-// Recommendations (issue #28) -- a second, independent read added alongside
-// getDashboardData() above rather than folded into it: that function's one
-// `items` query fetches only the columns needed for aggregate stats (no
-// cover/tags/category join), while every recommendation needs the full
-// card shape (categorySlug/categoryName, subtypeName, tags, coverUrl) plus
-// per-section status/rating/priority filtering and its own ORDER BY/LIMIT --
-// none of which the stats query's single unfiltered read can serve without
-// widening it for everyone. What IS shared here is the query-building/
-// row-normalizing logic itself (fetchRecommendationRows below), used by all
-// four sections, so the "avoid duplicating the base items fetch" instruction
-// is honored at the code level even though each section still issues its
-// own round trip to Postgres (the issue's own "four independent queries, no
-// combined/weighted scoring" requirement rules out collapsing them into one
+// Recommendations (issue #28, merged/made interactive by #44) -- a second,
+// independent read added alongside getDashboardData() above rather than
+// folded into it: that function's one `items` query fetches only the
+// columns needed for aggregate stats (no cover/tags/category join), while
+// every recommendation needs the full card shape (categorySlug/
+// categoryName, subtypeName, tags, coverUrl) plus per-section status/
+// rating/priority filtering and its own ORDER BY/LIMIT -- none of which the
+// stats query's single unfiltered read can serve without widening it for
+// everyone. What IS shared here is the query-building/row-normalizing logic
+// itself (fetchRecommendationRows below), used by all three sections, so
+// the "avoid duplicating the base items fetch" instruction is honored at
+// the code level even though each section still issues its own round trip
+// to Postgres (#28's own "independent queries, no combined/weighted
+// scoring" requirement -- reaffirmed by #44's "fixed three-key precedence,
+// not a blended numeric score" -- rules out collapsing them into one
 // request).
 //
-// Every query explicitly filters `.eq("user_id", user.id)` and
-// `.is("deleted_at", null)` rather than relying on RLS alone, matching
-// trash.ts/lists.ts's convention.
+// Every query explicitly filters `.eq("user_id", user.id)`,
+// `.is("deleted_at", null)`, and (issue #44) `.is("recommendation_dismissed_at",
+// null)` rather than relying on RLS alone, matching trash.ts/lists.ts's
+// convention.
 //
 // Random Planned pick: the issue's acceptance criteria call for
 // `ORDER BY random() LIMIT 1` evaluated in Postgres. PostgREST's `order`
@@ -285,7 +288,6 @@ export async function getDashboardData(): Promise<DashboardData> {
 // in the acceptance criteria, per software-engineer.md's guidance for a
 // contradiction between an AC and a Constraint.
 
-const HIGH_RATED_THRESHOLD = 8;
 const RECOMMENDATION_CAP = 5;
 
 // Signed URLs are resolved per request rather than cached -- same reasoning
@@ -307,9 +309,9 @@ export interface RecommendationItem {
 }
 
 export interface RecommendationsData {
-  highRatedPlanned: RecommendationItem[];
-  highPriorityPlanned: RecommendationItem[];
-  // null when the account has zero Planned items -- no row to pick.
+  recommendedPlanned: RecommendationItem[];
+  // null when the account has zero eligible (non-dismissed) Planned items --
+  // no row to pick.
   randomPlanned: RecommendationItem | null;
   continueOngoing: RecommendationItem[];
 }
@@ -318,14 +320,18 @@ export interface RecommendationsData {
 // recommendation section -- see the header comment above for why this is
 // factored out (avoids duplicating the cover-signing/tag-flattening logic
 // four times) while still issuing one query per call site.
+//
+// `.is("recommendation_dismissed_at", null)` (issue #44) sits alongside the
+// existing `user_id`/`deleted_at` filters below -- every section (Recommended
+// Planned, Random pick's count + range queries, Continue) routes through
+// this one function, so a dismissed item is excluded from every group by
+// construction rather than needing a per-section copy of the filter.
 async function fetchRecommendationRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
   filter: {
     status: ItemStatus;
-    minRating?: number;
-    priority?: PriorityLevel;
-    orderBy: Array<{ column: string; ascending: boolean }>;
+    orderBy: Array<{ column: string; ascending: boolean; nullsFirst?: boolean }>;
     limit?: number;
     range?: [number, number];
   },
@@ -347,16 +353,14 @@ async function fetchRecommendationRows(
     )
     .eq("user_id", userId)
     .is("deleted_at", null)
+    .is("recommendation_dismissed_at", null)
     .eq("status", filter.status);
 
-  if (filter.minRating !== undefined) {
-    query = query.gte("rating", filter.minRating);
-  }
-  if (filter.priority !== undefined) {
-    query = query.eq("priority", filter.priority);
-  }
-  for (const { column, ascending } of filter.orderBy) {
-    query = query.order(column, { ascending });
+  for (const { column, ascending, nullsFirst } of filter.orderBy) {
+    query =
+      nullsFirst === undefined
+        ? query.order(column, { ascending })
+        : query.order(column, { ascending, nullsFirst });
   }
   if (filter.limit !== undefined) {
     query = query.limit(filter.limit);
@@ -418,34 +422,37 @@ async function fetchRecommendationRows(
   );
 }
 
-// Section 1: high-rated Planned -- rating >= 8 (NULL ratings never match a
-// `.gte` threshold, same as getLibraryItems' minRating filter), rating desc
-// then created_at desc, capped at 5.
-async function getHighRatedPlanned(
+// Section 1: Recommended Planned (issue #44 -- replaces #28's separate
+// "high-rated Planned"/"high-priority Planned" sections with one merged,
+// ranked group). A fixed three-key precedence, not a blended numeric score
+// (that's explicitly deferred to #53): priority bucket first, then rating
+// desc within a tied bucket, then created_at desc as the final tie-break.
+//
+// Priority bucket ordering reuses `item_priority_rank` (migration
+// 20260909160000) -- the exact same computed-field PostgREST `.order()`
+// getLibraryItems' Priority sort dimension already applies (lib/queries/
+// items.ts), so "same bucket order as the Priority sort dimension" (this
+// issue's own acceptance criteria, plan.md §13) is enforced by construction
+// rather than duplicated as a second copy of the High/Medium/Low/none
+// mapping. `ascending: true` picks the High->Low (rank 1->4) direction --
+// this group has no direction toggle of its own, so only the one function
+// is ever used here (never item_priority_rank_reverse).
+//
+// Rating desc with `nullsFirst: false` mirrors the Rating sort dimension's
+// own NULL-last rule (same items.ts precedent) -- unrated Planned items
+// never sort ahead of, or interleaved with, rated ones within the same
+// priority bucket.
+async function getRecommendedPlanned(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
 ): Promise<RecommendationItem[]> {
   return fetchRecommendationRows(supabase, userId, {
     status: "planned",
-    minRating: HIGH_RATED_THRESHOLD,
     orderBy: [
-      { column: "rating", ascending: false },
+      { column: "item_priority_rank", ascending: true },
+      { column: "rating", ascending: false, nullsFirst: false },
       { column: "created_at", ascending: false },
     ],
-    limit: RECOMMENDATION_CAP,
-  });
-}
-
-// Section 2: high-priority Planned -- priority = 'high', created_at desc,
-// capped at 5.
-async function getHighPriorityPlanned(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-): Promise<RecommendationItem[]> {
-  return fetchRecommendationRows(supabase, userId, {
-    status: "planned",
-    priority: "high",
-    orderBy: [{ column: "created_at", ascending: false }],
     limit: RECOMMENDATION_CAP,
   });
 }
@@ -463,6 +470,7 @@ async function getRandomPlanned(
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .is("deleted_at", null)
+    .is("recommendation_dismissed_at", null)
     .eq("status", "planned");
 
   if (countError) {
@@ -501,11 +509,13 @@ async function getContinueOngoing(
   });
 }
 
-// Dashboard's Recommendations block (RecommendationsSection.tsx). All four
-// sections run concurrently, each its own independent query -- no
-// de-duplication across them (a Planned item can legitimately appear in
-// more than one section, or be the random pick too), per the issue's own
-// "deliberate simplicity choice" acceptance criterion.
+// Dashboard's Recommendations block (RecommendationsSection.tsx /
+// RecommendationsPanel.tsx). Three sections run concurrently (issue #44
+// merged the original four into three -- see getRecommendedPlanned's own
+// comment), each its own independent query -- no de-duplication across them
+// (a Planned item can legitimately appear in Recommended Planned and be the
+// random pick too), per #28's original "deliberate simplicity choice"
+// acceptance criterion, unchanged by #44.
 export async function getRecommendations(): Promise<RecommendationsData> {
   const supabase = await createClient();
 
@@ -515,15 +525,36 @@ export async function getRecommendations(): Promise<RecommendationsData> {
   if (!user) {
     // Defensive only -- middleware.ts already redirects an unauthenticated
     // request to /login before this route is ever reachable.
-    return { highRatedPlanned: [], highPriorityPlanned: [], randomPlanned: null, continueOngoing: [] };
+    return { recommendedPlanned: [], randomPlanned: null, continueOngoing: [] };
   }
 
-  const [highRatedPlanned, highPriorityPlanned, randomPlanned, continueOngoing] = await Promise.all([
-    getHighRatedPlanned(supabase, user.id),
-    getHighPriorityPlanned(supabase, user.id),
+  const [recommendedPlanned, randomPlanned, continueOngoing] = await Promise.all([
+    getRecommendedPlanned(supabase, user.id),
     getRandomPlanned(supabase, user.id),
     getContinueOngoing(supabase, user.id),
   ]);
 
-  return { highRatedPlanned, highPriorityPlanned, randomPlanned, continueOngoing };
+  return { recommendedPlanned, randomPlanned, continueOngoing };
+}
+
+// Random pick's Shuffle control + the auto-replacement fired when the
+// currently-shown Random pick item is dismissed (issue #44) both need a
+// freshly-rolled pick from a Server Action (lib/actions/recommendations.ts),
+// outside the combined getRecommendations() read above -- this is that
+// entry point: resolves its own session (same auth guard as
+// getRecommendations) and re-rolls via the same getRandomPlanned used on
+// first load, so a re-roll is identical in behavior/filtering (excludes
+// deleted_at/recommendation_dismissed_at, scoped to the signed-in user) to
+// the initial pick, just re-evaluated fresh.
+export async function getRandomPlannedRecommendation(): Promise<RecommendationItem | null> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return null;
+  }
+
+  return getRandomPlanned(supabase, user.id);
 }

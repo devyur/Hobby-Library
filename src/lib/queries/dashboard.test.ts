@@ -20,7 +20,9 @@ vi.mock("@/lib/queries/categories", () => ({
   getCategories: (...args: unknown[]) => getCategoriesMock(...args),
 }));
 
-const { getDashboardData, getRecommendations } = await import("./dashboard");
+const { getDashboardData, getRecommendations, getRandomPlannedRecommendation } = await import(
+  "./dashboard"
+);
 
 function fakeSupabase(itemsResult: { data: unknown[] | null; error: { message: string } | null }) {
   const isMock = vi.fn().mockResolvedValue(itemsResult);
@@ -406,12 +408,17 @@ function recommendationRow(overrides: {
   };
 }
 
-// Four empty, error-free results in the deterministic call order documented
-// above -- the baseline every test below overrides pieces of.
+// Three empty, error-free results in the deterministic call order
+// documented above -- the baseline every test below overrides pieces of.
+// getRecommendations() issues its three section queries concurrently via
+// Promise.all, but since each section function only awaits *after* fully
+// building its query chain synchronously, the `.from("items")` calls happen
+// in a deterministic order every run: 1) Recommended Planned, 2) random
+// Planned's count-only query, 3) Continue/Ongoing, and -- only once the
+// count resolves > 0 -- 4) random Planned's range-based row fetch.
 function emptyResults() {
   return [
-    { data: [], error: null }, // high-rated Planned
-    { data: [], error: null }, // high-priority Planned
+    { data: [], error: null }, // Recommended Planned
     { count: 0, error: null }, // random Planned count
     { data: [], error: null }, // Continue/Ongoing
   ];
@@ -429,28 +436,28 @@ describe("getRecommendations", () => {
     const result = await getRecommendations();
 
     expect(result).toEqual({
-      highRatedPlanned: [],
-      highPriorityPlanned: [],
+      recommendedPlanned: [],
       randomPlanned: null,
       continueOngoing: [],
     });
     expect(supabase.from).not.toHaveBeenCalled();
   });
 
-  it("scopes every section's query to the signed-in user_id and excludes soft-deleted items", async () => {
+  it("scopes every section's query to the signed-in user_id, and excludes soft-deleted and dismissed items (issue #44)", async () => {
     const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
     createClientMock.mockResolvedValue(supabase);
 
     await getRecommendations();
 
-    expect(supabase.builders).toHaveLength(4);
+    expect(supabase.builders).toHaveLength(3);
     for (const builder of supabase.builders) {
       expect(builder.eq).toHaveBeenCalledWith("user_id", "user-1");
       expect(builder.is).toHaveBeenCalledWith("deleted_at", null);
+      expect(builder.is).toHaveBeenCalledWith("recommendation_dismissed_at", null);
     }
   });
 
-  it("high-rated Planned: filters status=planned and rating >= 8, ordered rating desc then created_at desc, capped at 5", async () => {
+  it("Recommended Planned (issue #44): filters status=planned (no rating threshold), ordered by priority bucket (item_priority_rank, same as the Priority sort dimension) then rating desc with nulls last then created_at desc, capped at 5", async () => {
     const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
     createClientMock.mockResolvedValue(supabase);
 
@@ -458,23 +465,13 @@ describe("getRecommendations", () => {
 
     const builder = supabase.builders[0];
     expect(builder.eq).toHaveBeenCalledWith("status", "planned");
-    expect(builder.gte).toHaveBeenCalledWith("rating", 8);
-    expect(builder.order).toHaveBeenNthCalledWith(1, "rating", { ascending: false });
-    expect(builder.order).toHaveBeenNthCalledWith(2, "created_at", { ascending: false });
-    expect(builder.limit).toHaveBeenCalledWith(5);
-  });
-
-  it("high-priority Planned: filters status=planned and priority=high (no rating threshold), ordered created_at desc, capped at 5", async () => {
-    const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
-    createClientMock.mockResolvedValue(supabase);
-
-    await getRecommendations();
-
-    const builder = supabase.builders[1];
-    expect(builder.eq).toHaveBeenCalledWith("status", "planned");
-    expect(builder.eq).toHaveBeenCalledWith("priority", "high");
     expect(builder.gte).not.toHaveBeenCalled();
-    expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
+    expect(builder.order).toHaveBeenNthCalledWith(1, "item_priority_rank", { ascending: true });
+    expect(builder.order).toHaveBeenNthCalledWith(2, "rating", {
+      ascending: false,
+      nullsFirst: false,
+    });
+    expect(builder.order).toHaveBeenNthCalledWith(3, "created_at", { ascending: false });
     expect(builder.limit).toHaveBeenCalledWith(5);
   });
 
@@ -484,20 +481,19 @@ describe("getRecommendations", () => {
 
     await getRecommendations();
 
-    const builder = supabase.builders[3];
+    const builder = supabase.builders[2];
     expect(builder.eq).toHaveBeenCalledWith("status", "ongoing");
     expect(builder.gte).not.toHaveBeenCalled();
     expect(builder.order).toHaveBeenCalledWith("created_at", { ascending: false });
     expect(builder.limit).toHaveBeenCalledWith(5);
   });
 
-  it("random Planned: counts Planned items, then range-fetches exactly one row at a JS-computed random offset", async () => {
+  it("random Planned: counts eligible (non-deleted, non-dismissed) Planned items, then range-fetches exactly one row at a JS-computed random offset", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0.5); // floor(0.5 * 10) = 5
     try {
       const supabase = fakeRecommendationsSupabase({
         user: { id: "user-1" },
         results: [
-          { data: [], error: null },
           { data: [], error: null },
           { count: 10, error: null },
           { data: [], error: null },
@@ -508,32 +504,33 @@ describe("getRecommendations", () => {
 
       const result = await getRecommendations();
 
-      expect(supabase.builders).toHaveLength(5);
-      const countBuilder = supabase.builders[2];
+      expect(supabase.builders).toHaveLength(4);
+      const countBuilder = supabase.builders[1];
       expect(countBuilder.eq).toHaveBeenCalledWith("status", "planned");
-      const rangeBuilder = supabase.builders[4];
+      expect(countBuilder.is).toHaveBeenCalledWith("recommendation_dismissed_at", null);
+      const rangeBuilder = supabase.builders[3];
       expect(rangeBuilder.range).toHaveBeenCalledWith(5, 5);
+      expect(rangeBuilder.is).toHaveBeenCalledWith("recommendation_dismissed_at", null);
       expect(result.randomPlanned?.id).toBe("random-item");
     } finally {
       randomSpy.mockRestore();
     }
   });
 
-  it("random Planned: is null, with no range query issued, when the account has zero Planned items", async () => {
+  it("random Planned: is null, with no range query issued, when the account has zero eligible Planned items", async () => {
     const supabase = fakeRecommendationsSupabase({ user: { id: "user-1" }, results: emptyResults() });
     createClientMock.mockResolvedValue(supabase);
 
     const result = await getRecommendations();
 
     expect(result.randomPlanned).toBeNull();
-    expect(supabase.builders).toHaveLength(4);
+    expect(supabase.builders).toHaveLength(3);
   });
 
   it("random Planned: is null (not a thrown error) when the count query itself errors", async () => {
     const supabase = fakeRecommendationsSupabase({
       user: { id: "user-1" },
       results: [
-        { data: [], error: null },
         { data: [], error: null },
         { count: null, error: { message: "boom" } },
         { data: [], error: null },
@@ -567,7 +564,6 @@ describe("getRecommendations", () => {
           ],
           error: null,
         },
-        { data: [], error: null },
         { count: 0, error: null },
         { data: [], error: null },
       ],
@@ -576,7 +572,7 @@ describe("getRecommendations", () => {
 
     const result = await getRecommendations();
 
-    expect(result.highRatedPlanned).toEqual([
+    expect(result.recommendedPlanned).toEqual([
       {
         id: "item-1",
         title: "Dune",
@@ -600,8 +596,7 @@ describe("getRecommendations", () => {
 
     const result = await getRecommendations();
 
-    expect(result.highRatedPlanned).toEqual([]);
-    expect(result.highPriorityPlanned).toEqual([]);
+    expect(result.recommendedPlanned).toEqual([]);
     expect(result.continueOngoing).toEqual([]);
   });
 
@@ -609,8 +604,7 @@ describe("getRecommendations", () => {
     const supabase = fakeRecommendationsSupabase({
       user: { id: "user-1" },
       results: [
-        { data: null, error: { message: "boom" } }, // high-rated Planned errors
-        { data: [recommendationRow({ id: "ok-priority" })], error: null },
+        { data: null, error: { message: "boom" } }, // Recommended Planned errors
         { count: 0, error: null },
         { data: [recommendationRow({ id: "ok-ongoing", status: "ongoing" })], error: null },
       ],
@@ -619,9 +613,65 @@ describe("getRecommendations", () => {
 
     const result = await getRecommendations();
 
-    expect(result.highRatedPlanned).toEqual([]);
-    expect(result.highPriorityPlanned).toHaveLength(1);
+    expect(result.recommendedPlanned).toEqual([]);
     expect(result.continueOngoing).toHaveLength(1);
+  });
+});
+
+// getRandomPlannedRecommendation (issue #44) -- the standalone entry point
+// rerollRandomPlannedAction (lib/actions/recommendations.ts) calls for both
+// Shuffle and the dismiss-triggered auto-replacement. Same underlying
+// getRandomPlanned logic getRecommendations() itself uses (already covered
+// above); this only re-checks the auth guard and that it's wired the same
+// way.
+describe("getRandomPlannedRecommendation", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  it("returns null without querying items when unauthenticated", async () => {
+    const supabase = fakeRecommendationsSupabase({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRandomPlannedRecommendation();
+
+    expect(result).toBeNull();
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("re-rolls a fresh random Planned pick for the signed-in user, excluding dismissed items", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    try {
+      const supabase = fakeRecommendationsSupabase({
+        user: { id: "user-1" },
+        results: [
+          { count: 3, error: null },
+          { data: [recommendationRow({ id: "reroll-item" })], error: null },
+        ],
+      });
+      createClientMock.mockResolvedValue(supabase);
+
+      const result = await getRandomPlannedRecommendation();
+
+      expect(supabase.builders).toHaveLength(2);
+      expect(supabase.builders[0].is).toHaveBeenCalledWith("recommendation_dismissed_at", null);
+      expect(supabase.builders[1].range).toHaveBeenCalledWith(0, 0);
+      expect(result?.id).toBe("reroll-item");
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("returns null when there is no eligible Planned item left", async () => {
+    const supabase = fakeRecommendationsSupabase({
+      user: { id: "user-1" },
+      results: [{ count: 0, error: null }],
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getRandomPlannedRecommendation();
+
+    expect(result).toBeNull();
   });
 });
 

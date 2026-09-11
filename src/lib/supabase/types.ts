@@ -29,6 +29,19 @@
 // `default_sort_direction`, and the `Functions` map now includes
 // `item_priority_rank_reverse`/`item_title_sort_key` alongside the
 // existing `item_priority_rank`/`item_status_rank`.
+//
+// ISSUE #44 UPDATE -- HAND-EDITED, NOT REGENERATED: the same Docker-less,
+// token-less sandbox constraint above still holds (re-confirmed: no
+// `docker` binary, no `SUPABASE_ACCESS_TOKEN`), and this time there was no
+// reachable Postgres connection at all to run `@supabase/postgrest-typegen`
+// against either, so the `items` Row/Insert/Update shapes below were
+// hand-edited to add `recommendation_dismissed_at: string | null` (Row) /
+// `recommendation_dismissed_at?: string | null` (Insert/Update), matching
+// migration 20260911100000_add_items_recommendation_dismissed_at.sql and
+// typed exactly like the adjacent `completed_at`/`deleted_at` columns. QA:
+// please double-check this block against a live `supabase gen types
+// typescript` run once this repo is `supabase link`ed somewhere with
+// Docker or an access token available.
 // Regenerate via the real `supabase` CLI once this repo is `supabase
 // link`ed in an environment with Docker or an access token (see AGENTS.md:
 // regenerate after any schema change).
@@ -216,6 +229,7 @@ export type Database = {
           notes: string | null
           priority: Database["public"]["Enums"]["priority_level"] | null
           rating: number | null
+          recommendation_dismissed_at: string | null
           review: string | null
           status: Database["public"]["Enums"]["item_status"]
           subtype_id: string
@@ -232,6 +246,7 @@ export type Database = {
           notes?: string | null
           priority?: Database["public"]["Enums"]["priority_level"] | null
           rating?: number | null
+          recommendation_dismissed_at?: string | null
           review?: string | null
           status?: Database["public"]["Enums"]["item_status"]
           subtype_id: string
@@ -248,6 +263,7 @@ export type Database = {
           notes?: string | null
           priority?: Database["public"]["Enums"]["priority_level"] | null
           rating?: number | null
+          recommendation_dismissed_at?: string | null
           review?: string | null
           status?: Database["public"]["Enums"]["item_status"]
           subtype_id?: string

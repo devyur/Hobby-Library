@@ -81,6 +81,7 @@ Unique per (lower(name), user_id), NULLS NOT DISTINCT — mirrors `subtypes`' un
 | updated_at | timestamptz | maintained by trigger |
 | completed_at | timestamptz, nullable | set manually, never inferred automatically (per plan §4) |
 | deleted_at | timestamptz, nullable | soft delete — non-null means "in Trash" |
+| recommendation_dismissed_at | timestamptz, nullable, default null | non-null means this item is dismissed from Dashboard Recommendations (issue #44) — excluded from every recommendation query regardless of status/deleted_at; keyed by this row's own id, so a later-created item with the same title/category is never treated as already dismissed |
 
 ### `item_tags` (junction)
 | column | type |

@@ -312,14 +312,17 @@ A small section helping answer:
 
 > "What should I consume next?"
 
-Potential examples:
+Three groups (merged/made interactive by [#44](https://github.com/devyur/Hobby-Library/issues/44), building on #28's original four static picks):
 
-- high-rated Planned items
-- high-priority Planned items
-- random Planned item
-- unfinished/ongoing items
+- **Recommended Planned** — up to 5 Planned items, replacing the original "high-rated" and "high-priority" picks with one combined ranking. Order is a fixed three-key precedence (not a blended numeric score — see below): priority bucket first (High → Medium → Low → no-priority-set, same bucket order as the Priority sort dimension, §13), then rating descending within a tied bucket (unrated items sort last, never interleaved — same NULL-last rule as the Rating sort dimension), then `created_at` descending as the final tie-break.
+- **Random pick** — one random Planned item, unchanged selection logic from #28. Carries a **Shuffle** control (shown whenever the group itself renders) that re-rolls this one pick in place, client-side/server-action, no full page reload and no guarantee of a different item than before.
+- **Continue** — up to 5 unfinished/Ongoing items by `created_at` descending, unchanged from #28.
 
-Recommendation logic should remain simple initially.
+**Dismiss**: every card in every group has a dismiss control. Dismissing removes the card from view immediately (no reload) and persists server-side via `items.recommendation_dismissed_at` (database-schema.md §3) — a dismissed item never resurfaces in any group, on any device, regardless of later status changes, until explicitly un-dismissed. Right after dismissing, an immediate inline "Undo" is offered; once that window is gone, reversing the dismiss needs a future un-dismiss screen ([#54](https://github.com/devyur/Hobby-Library/issues/54)) — out of scope here. Dismissing the Random pick's item auto-replaces it with a new random pick (the same mechanism Shuffle uses); dismissing from Recommended Planned/Continue does not backfill a replacement until the next reload. If a dismiss leaves every group empty, the Dashboard shows a message distinct from the "add a few items to your library to see suggestions here" zero-state, since that wording is misleading once the account has items but every current pick has been dismissed.
+
+A blended/weighted numeric score combining rating + priority + recency into one tunable value (rather than the fixed three-key precedence above) is intentionally deferred — see [#53](https://github.com/devyur/Hobby-Library/issues/53).
+
+Recommendations stay account-wide/combined across categories (unrelated to #50's per-category Dashboard statistics, which only covers the Statistics panels).
 
 ---
 
