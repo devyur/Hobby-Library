@@ -9,7 +9,19 @@ import type { CategoryBreakdownEntry, DashboardStats } from "@/lib/queries/dashb
 // Plain CSS bars throughout -- no charting library, per the issue's own
 // Constraints. The eighth stat (Completion trends) is its own component,
 // CompletionTrends.tsx, composed alongside this one rather than inside it.
-export function LibraryStats({ stats }: { stats: DashboardStats }) {
+//
+// showCategoryBreakdown (issue #50, default true so the existing /dashboard
+// call site needs no prop change): hides the "Category breakdown" grid cell
+// -- and its sibling "Rating distribution" cell's 2-column layout, since a
+// breakdown-by-category chart is meaningless once already scoped to one
+// category -- for /dashboard/[category]'s reuse of this same component.
+export function LibraryStats({
+  stats,
+  showCategoryBreakdown = true,
+}: {
+  stats: DashboardStats;
+  showCategoryBreakdown?: boolean;
+}) {
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
@@ -39,17 +51,24 @@ export function LibraryStats({ stats }: { stats: DashboardStats }) {
           />
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {showCategoryBreakdown ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
+              <h3 className="text-sm font-medium text-text-primary">Rating distribution</h3>
+              <RatingDistributionChart distribution={stats.ratingDistribution} />
+            </div>
+
+            <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
+              <h3 className="text-sm font-medium text-text-primary">Category breakdown</h3>
+              <CategoryBreakdownList breakdown={stats.categoryBreakdown} />
+            </div>
+          </div>
+        ) : (
           <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
             <h3 className="text-sm font-medium text-text-primary">Rating distribution</h3>
             <RatingDistributionChart distribution={stats.ratingDistribution} />
           </div>
-
-          <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-4">
-            <h3 className="text-sm font-medium text-text-primary">Category breakdown</h3>
-            <CategoryBreakdownList breakdown={stats.categoryBreakdown} />
-          </div>
-        </div>
+        )}
 
         <div
           aria-label="Recently added"
@@ -125,23 +144,27 @@ function CategoryBreakdownList({ breakdown }: { breakdown: CategoryBreakdownEntr
   return (
     <ul className="flex flex-col gap-2">
       {breakdown.map((entry) => (
-        <li
-          key={entry.categoryId}
-          aria-label={`${entry.categoryName}: ${entry.count} items`}
-          className="flex items-center gap-3"
-        >
-          <span className="w-24 shrink-0 truncate text-sm text-text-primary">
-            {entry.categoryName}
-          </span>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-border">
-            <div
-              className="h-full rounded-full bg-accent"
-              style={{ width: `${(entry.count / max) * 100}%` }}
-            />
-          </div>
-          <span className="w-8 shrink-0 text-right text-sm text-text-secondary">
-            {entry.count}
-          </span>
+        <li key={entry.categoryId} aria-label={`${entry.categoryName}: ${entry.count} items`}>
+          {/* Issue #50: a real <Link> (not a JS-only onClick handler) so
+              middle-click/"open in new tab" works, navigating to this
+              category's own scoped Dashboard drill-down. */}
+          <Link
+            href={`/dashboard/${entry.categorySlug}`}
+            className="flex items-center gap-3 rounded hover:text-accent"
+          >
+            <span className="w-24 shrink-0 truncate text-sm text-text-primary">
+              {entry.categoryName}
+            </span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-border">
+              <div
+                className="h-full rounded-full bg-accent"
+                style={{ width: `${(entry.count / max) * 100}%` }}
+              />
+            </div>
+            <span className="w-8 shrink-0 text-right text-sm text-text-secondary">
+              {entry.count}
+            </span>
+          </Link>
         </li>
       ))}
     </ul>

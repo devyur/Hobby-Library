@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/types";
-import { getCategories } from "@/lib/queries/categories";
+import { getCategories, type CategorySummary } from "@/lib/queries/categories";
 
 // Dashboard stats (issue #27, folding in #43's completion-trend charts).
 // Library-wide (all categories combined), following items.ts's existing
@@ -37,6 +37,10 @@ export interface RecentItem {
 export interface CategoryBreakdownEntry {
   categoryId: string;
   categoryName: string;
+  // Issue #50: lets CategoryBreakdownList link straight to
+  // /dashboard/[slug] without an extra query -- resolved from the same
+  // categoriesById map already used to fill in categoryName.
+  categorySlug: string;
   count: number;
 }
 
@@ -124,37 +128,30 @@ function fillMonthRange(
   return months;
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
-  const supabase = await createClient();
+// Item-row shape shared by getDashboardData()'s and getCategoryDashboardStats'
+// identically-shaped `items` selects -- both feed the same
+// buildDashboardStats() below (issue #50).
+interface DashboardItemRow {
+  id: string;
+  title: string;
+  status: ItemStatus;
+  rating: number | null;
+  category_id: string;
+  created_at: string;
+  completed_at: string | null;
+}
 
-  const [itemsResult, categories] = await Promise.all([
-    supabase
-      .from("items")
-      .select("id, title, status, rating, category_id, created_at, completed_at")
-      .is("deleted_at", null),
-    getCategories(),
-  ]);
-
-  // Every category gets a trend panel (empty state if it has none) even
-  // before any items-row processing below -- built here so it's the
-  // fallback on a query error too.
-  const categoriesById = new Map(categories.map((category) => [category.id, category]));
-  const emptyTrends: CategoryTrend[] = categories.map((category) => ({
-    categoryId: category.id,
-    categoryName: category.name,
-    months: [],
-  }));
-
-  if (itemsResult.error) {
-    // Swallowed rather than thrown, same convention as every other query in
-    // this codebase: a Dashboard that renders its zero-state because of a
-    // transient read error is better than one that crashes outright.
-    console.error("Failed to load dashboard data:", itemsResult.error.message);
-    return { stats: emptyStats(), trends: emptyTrends };
-  }
-
-  const rows = itemsResult.data ?? [];
-
+// The stat-computation logic shared by the account-wide getDashboardData()
+// and the per-category getCategoryDashboardStats() (issue #50) -- everything
+// in DashboardStats is derived from `rows` (already filtered to whichever
+// scope the caller's query applied) plus `categoriesById` for name/slug
+// lookups. Completion trends are NOT part of this: that's account-wide-only
+// (issue #50's own "stays exclusively on /dashboard" requirement), so it's
+// computed separately in getDashboardData(), not here.
+function buildDashboardStats(
+  rows: DashboardItemRow[],
+  categoriesById: Map<string, CategorySummary>,
+): DashboardStats {
   // -- Total items + per-status counts --
   const statusCounts = emptyStatusCounts();
   for (const row of rows) {
@@ -207,9 +204,53 @@ export async function getDashboardData(): Promise<DashboardData> {
     .map(([categoryId, count]) => ({
       categoryId,
       categoryName: categoriesById.get(categoryId)?.name ?? "",
+      categorySlug: categoriesById.get(categoryId)?.slug ?? "",
       count,
     }))
     .sort((a, b) => b.count - a.count);
+
+  return {
+    totalItems: rows.length,
+    statusCounts,
+    averageRating,
+    recentItems,
+    completionRatePercent,
+    ratingDistribution,
+    categoryBreakdown,
+  };
+}
+
+export async function getDashboardData(): Promise<DashboardData> {
+  const supabase = await createClient();
+
+  const [itemsResult, categories] = await Promise.all([
+    supabase
+      .from("items")
+      .select("id, title, status, rating, category_id, created_at, completed_at")
+      .is("deleted_at", null),
+    getCategories(),
+  ]);
+
+  // Every category gets a trend panel (empty state if it has none) even
+  // before any items-row processing below -- built here so it's the
+  // fallback on a query error too.
+  const categoriesById = new Map(categories.map((category) => [category.id, category]));
+  const emptyTrends: CategoryTrend[] = categories.map((category) => ({
+    categoryId: category.id,
+    categoryName: category.name,
+    months: [],
+  }));
+
+  if (itemsResult.error) {
+    // Swallowed rather than thrown, same convention as every other query in
+    // this codebase: a Dashboard that renders its zero-state because of a
+    // transient read error is better than one that crashes outright.
+    console.error("Failed to load dashboard data:", itemsResult.error.message);
+    return { stats: emptyStats(), trends: emptyTrends };
+  }
+
+  const rows = itemsResult.data ?? [];
+  const stats = buildDashboardStats(rows, categoriesById);
 
   // -- Completion trends: monthly completion counts per category --
   const monthCountsByCategory = new Map<string, Map<string, number>>();
@@ -234,18 +275,40 @@ export async function getDashboardData(): Promise<DashboardData> {
     return { categoryId: category.id, categoryName: category.name, months };
   });
 
-  return {
-    stats: {
-      totalItems: rows.length,
-      statusCounts,
-      averageRating,
-      recentItems,
-      completionRatePercent,
-      ratingDistribution,
-      categoryBreakdown,
-    },
-    trends,
-  };
+  return { stats, trends };
+}
+
+// Per-category Dashboard drill-down (issue #50), reached via
+// /dashboard/[category] -- same items shape/filters as getDashboardData()
+// above, scoped to one category_id, sharing buildDashboardStats() so every
+// stat-computation rule (status counts, average rating, recently added,
+// completion rate, rating distribution) stays in agreement between the
+// account-wide and per-category views. No explicit user_id filter, same
+// RLS-scoped convention as getDashboardData(); `.is("deleted_at", null)`
+// kept. categoryBreakdown on the returned stats will trivially be a single-
+// entry (or empty, for a zero-item category) array since the query is
+// already scoped to one category -- the caller (dashboard/[category]/page.tsx)
+// never renders it (LibraryStats' showCategoryBreakdown={false}).
+export async function getCategoryDashboardStats(categoryId: string): Promise<DashboardStats> {
+  const supabase = await createClient();
+
+  const [itemsResult, categories] = await Promise.all([
+    supabase
+      .from("items")
+      .select("id, title, status, rating, category_id, created_at, completed_at")
+      .eq("category_id", categoryId)
+      .is("deleted_at", null),
+    getCategories(),
+  ]);
+
+  if (itemsResult.error) {
+    console.error("Failed to load category dashboard stats:", itemsResult.error.message);
+    return emptyStats();
+  }
+
+  const categoriesById = new Map(categories.map((category) => [category.id, category]));
+  const rows = itemsResult.data ?? [];
+  return buildDashboardStats(rows, categoriesById);
 }
 
 // ---------------------------------------------------------------------------

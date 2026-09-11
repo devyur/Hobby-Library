@@ -20,9 +20,12 @@ vi.mock("@/lib/queries/categories", () => ({
   getCategories: (...args: unknown[]) => getCategoriesMock(...args),
 }));
 
-const { getDashboardData, getRecommendations, getRandomPlannedRecommendation } = await import(
-  "./dashboard"
-);
+const {
+  getDashboardData,
+  getCategoryDashboardStats,
+  getRecommendations,
+  getRandomPlannedRecommendation,
+} = await import("./dashboard");
 
 function fakeSupabase(itemsResult: { data: unknown[] | null; error: { message: string } | null }) {
   const isMock = vi.fn().mockResolvedValue(itemsResult);
@@ -256,8 +259,8 @@ describe("getDashboardData", () => {
     const { stats } = await getDashboardData();
 
     expect(stats.categoryBreakdown).toEqual([
-      { categoryId: "cat-games", categoryName: "Games", count: 2 },
-      { categoryId: "cat-books", categoryName: "Books", count: 1 },
+      { categoryId: "cat-games", categoryName: "Games", categorySlug: "games", count: 2 },
+      { categoryId: "cat-books", categoryName: "Books", categorySlug: "books", count: 1 },
     ]);
   });
 
@@ -305,6 +308,92 @@ describe("getDashboardData", () => {
 
     const games = trends.find((t) => t.categoryId === "cat-games");
     expect(games?.months).toEqual([]);
+  });
+});
+
+// Unit coverage for getCategoryDashboardStats (issue #50) -- same
+// stat-computation rules as getDashboardData above (they share
+// buildDashboardStats internally), so this suite only re-checks the query
+// scoping (category_id + deleted_at filters) and a couple of representative
+// derived stats, rather than re-proving every computation rule already
+// covered exhaustively above.
+function fakeCategorySupabase(itemsResult: { data: unknown[] | null; error: { message: string } | null }) {
+  const isMock = vi.fn().mockResolvedValue(itemsResult);
+  const eqMock = vi.fn(() => ({ is: isMock }));
+  const selectMock = vi.fn(() => ({ eq: eqMock }));
+  const fromMock = vi.fn((table: string) => {
+    if (table === "items") return { select: selectMock };
+    throw new Error(`Unexpected table in test: ${table}`);
+  });
+
+  return { from: fromMock, selectMock, eqMock, isMock };
+}
+
+describe("getCategoryDashboardStats", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    getCategoriesMock.mockReset();
+    getCategoriesMock.mockResolvedValue(CATEGORIES);
+  });
+
+  it("scopes the items read to the given category_id and non-deleted rows only", async () => {
+    const supabase = fakeCategorySupabase({ data: [], error: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    await getCategoryDashboardStats("cat-games");
+
+    expect(supabase.selectMock).toHaveBeenCalledWith(
+      "id, title, status, rating, category_id, created_at, completed_at",
+    );
+    expect(supabase.eqMock).toHaveBeenCalledWith("category_id", "cat-games");
+    expect(supabase.isMock).toHaveBeenCalledWith("deleted_at", null);
+  });
+
+  it("returns the same empty-state stats emptyStats() produces account-wide for a category with zero items", async () => {
+    const supabase = fakeCategorySupabase({ data: [], error: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const stats = await getCategoryDashboardStats("cat-games");
+
+    expect(stats).toEqual({
+      totalItems: 0,
+      statusCounts: { planned: 0, ongoing: 0, completed: 0, dropped: 0 },
+      averageRating: null,
+      recentItems: [],
+      completionRatePercent: null,
+      ratingDistribution: new Array(10).fill(0),
+      categoryBreakdown: [],
+    });
+  });
+
+  it("computes stats from whatever rows the category_id-filtered query returns, with a single-entry category breakdown", async () => {
+    const supabase = fakeCategorySupabase({
+      data: [
+        row({ categoryId: "cat-games", status: "completed", rating: 8 }),
+        row({ categoryId: "cat-games", status: "planned" }),
+      ],
+      error: null,
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const stats = await getCategoryDashboardStats("cat-games");
+
+    expect(stats.totalItems).toBe(2);
+    expect(stats.statusCounts).toEqual({ planned: 1, ongoing: 0, completed: 1, dropped: 0 });
+    expect(stats.averageRating).toBe(8);
+    expect(stats.categoryBreakdown).toEqual([
+      { categoryId: "cat-games", categoryName: "Games", categorySlug: "games", count: 2 },
+    ]);
+  });
+
+  it("returns empty-state stats (not a thrown error) when the items query errors", async () => {
+    const supabase = fakeCategorySupabase({ data: null, error: { message: "boom" } });
+    createClientMock.mockResolvedValue(supabase);
+
+    const stats = await getCategoryDashboardStats("cat-games");
+
+    expect(stats.totalItems).toBe(0);
+    expect(stats.categoryBreakdown).toEqual([]);
   });
 });
 
