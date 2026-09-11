@@ -757,3 +757,5 @@ Rationale: Postgres fits the relational item/tag/list model well and supports th
 Known tradeoff: free-tier Supabase projects pause after ~7 days of no API activity and require a manual restore via the Supabase dashboard (not an automatic wake like typical serverless cold starts). Mitigation shipped (issue #32): `.github/workflows/supabase-keepalive.yml`, a scheduled GitHub Actions workflow (daily cron, plus manual `workflow_dispatch`) that hits the Supabase project's PostgREST API with the public anon/publishable key — comfortably under the 7-day pause threshold.
 
 Note: Vercel's GitHub integration was connected on 2026-09-10 to auto-deploy `master` pushes to production (issue #32 follow-up).
+
+Note: Vercel's serverless function region is pinned to `fra1` (Frankfurt) via root-level `vercel.json`, to sit next to Supabase's `eu-central-1` project and avoid a transatlantic round trip on every server-rendered request/middleware auth check (issue #51; previously unpinned, defaulting to `iad1`/Washington D.C.).
