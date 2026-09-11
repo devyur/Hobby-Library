@@ -145,6 +145,8 @@ Allowed types/size caps enforced at the application/upload layer plus Supabase S
 | sort_order | int, default 0 |
 | added_at | timestamptz, default now() |
 
+`sort_order` drives manual drag-reordering within a list ([#42](https://github.com/devyur/Hobby-Library/issues/42)) — `getListDetail` orders members by `sort_order asc, added_at asc`, replacing the original "most recently added first" ordering. A new add no longer leaves `sort_order` at its column default; `addItemToListAction` computes current-max-in-list + 1 so it appends to the end instead of colliding at 0. Reordering is a single `upsert()` of every row's new `sort_order` per drop, gated by the existing `list_items` update policy (no new RLS needed — see §4).
+
 Primary key `(list_id, item_id)`.
 
 ---

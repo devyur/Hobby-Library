@@ -364,6 +364,8 @@ Simple manually managed lists:
 - add item
 - remove item
 - rename/delete list
+- manually drag-reorder items within a list ([#42](https://github.com/devyur/Hobby-Library/issues/42))
+- add/remove an item from any of its lists directly from the item detail page, not only the list's own page ([#41](https://github.com/devyur/Hobby-Library/issues/41))
 
 ### Future
 
