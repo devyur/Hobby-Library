@@ -336,8 +336,9 @@ Main navigation should expose:
 - Audio
 - Video
 - Custom Lists
-- Trash
 - Settings/Profile
+
+Trash was originally a main-nav entry too, but [#49](https://github.com/devyur/Hobby-Library/issues/49) relocated it into Settings (used infrequently) — Trash's own functionality (§22) is unchanged, only its entry point moved.
 
 The application should remember the last screen used.
 

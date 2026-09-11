@@ -219,7 +219,7 @@ No dedicated tables. All stats (totals, per-status counts, average rating, compl
 
 ## 8. Export / Import
 
-Export walks `items` joined with `item_tags→tags`, `item_links`, `item_attachments` (metadata only, not file bytes), `item_images` (metadata), and `lists`/`list_items`, serialized to JSON (CSV optional/secondary per plan §23). Import reverses this, matching or creating `tags`/`subtypes` by name when not already present for the user.
+Export walks `items` joined with `item_tags→tags`, `item_links`, `item_attachments` (metadata only, not file bytes), `item_images` (metadata), and `lists`/`list_items`, assembled once by `buildExportData()` into a canonical `ExportData` shape, then serialized to either JSON (#29, the full-fidelity/importable format) or CSV (#45, `buildExportCsv()` — a flattened, export-only secondary format per plan §23, RFC 4180 escaping, no import/round-trip support). Import (#30) reverses the JSON path only, matching or creating `tags`/`subtypes` by name when not already present for the user.
 
 ---
 
