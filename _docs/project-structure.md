@@ -138,6 +138,7 @@ Hobby Library/
 ├── .env.example
 ├── next.config.ts
 ├── tsconfig.json
+├── vercel.json                     # regions: ["fra1"] — pins serverless functions next to Supabase's eu-central-1 project (#51); doesn't cover Middleware, which runs on Vercel's separate Edge Runtime (see #58)
 └── package.json
 ```
 

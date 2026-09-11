@@ -203,9 +203,9 @@ Description: Shipped: removed from `buildNavItems()` (`navItems.ts`), added as a
 Goal: Let a user drill into one category from the Dashboard to see library/stats/recently-added scoped to just that category, while trends/recommendations/continue stay account-wide.
 Description: Shipped as a new route `/dashboard/[category]`, reusing `LibraryStats.tsx` (its own "Your library"/"Library statistics"/"Recently added" sections) via a new `categoryId`-filtered `getCategoryDashboardStats()`, sharing aggregation logic with the main Dashboard's query via an extracted `buildDashboardStats()` helper. CompletionTrends/RecommendationsSection are never rendered on this route. Entry point: the main Dashboard's Category breakdown tile rows now link here.
 
-## 51. Investigate slow page navigation (3-5s per click) in production — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/51)
-Goal: Diagnose and fix why navigating the live production app takes 3-5s per click.
-Description: Reported by the user testing the live app. Deliberately scoped as investigation-first (profile via real timing data, check Vercel/Supabase region alignment and serverless cold-start behavior, check for unnecessarily sequential queries) rather than a guessed fix, since several independent causes are plausible given the architecture.
+## 51. Fix production navigation latency: pin Vercel function region to Frankfurt (fra1) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/51) — done
+Goal: Diagnose and fix why navigating the live production app took 3-5s per click.
+Description: Investigated live (real TTFB profiling on production, disposable test account) before fixing, per its original investigation-first scoping. Findings: cold starts ruled out (no cold/warm gap); region mismatch confirmed as primary cause (Vercel functions ran in `iad1`, Supabase is `eu-central-1`); `getItemDetail` already uses one joined query + `Promise.all`, not sequential awaits. Fix: `vercel.json`'s `regions: ["fra1"]`, verified live via the `X-Vercel-Id` response header. TTFB dropped from ~600-1900ms to ~500-1000ms — a real but partial improvement (residual latency tracked by #58, including the discovery that Middleware runs on Vercel's Edge Runtime and isn't pinned by `regions`).
 
 ## 55. Live DB missing recommendation_dismissed_at column (#44 migration never applied) — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/55) — done
 Goal: Fix the Dashboard's dismiss/shuffle Recommendations feature (#44), broken in production.
@@ -214,3 +214,11 @@ Description: Found by QA verifying #45 — #44's migration (`20260911100000_add_
 ## 56. Stale e2e assertion in dashboard-recommendations.spec.ts ("High-rated Planned") — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/56)
 Goal: Fix a pre-existing stale e2e test referencing a label #44 renamed before this test was ever updated.
 Description: Found by QA verifying #50 while sanity-checking an unrelated flakiness claim — `dashboard-recommendations.spec.ts` asserts `"High-rated Planned"`, a label #44 (`0c905ae`) replaced with "Recommended Planned." Predates #50; not caused by it.
+
+## 57. Category breakdown links don't look clickable — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/57)
+Goal: Style the Dashboard's Category breakdown category-name links (#50) so they visually read as links, not plain text.
+Description: User didn't notice these were clickable during live testing — no link styling (color/underline/hover). Not groomed yet; discuss alongside the broader in-place-toggle question raised about #50 before implementing.
+
+## 58. Isolate middleware auth-check latency; audit other pages for sequential queries — [GitHub issue](https://github.com/devyur/Hobby-Library/issues/58)
+Goal: Two residual investigation items moved out of #51's scope: (1) isolate how much of per-request latency is middleware's blocking `supabase.auth.getUser()` call vs. the page's own query, (2) audit pages beyond `getItemDetail` for unnecessarily sequential (non-parallelized) Supabase queries.
+Description: Filed during #51's re-grooming to keep that issue scoped to the region-pin fix. #51's QA pass added concrete evidence for item (1): Middleware runs on Vercel's Edge Runtime, which `vercel.json`'s `regions` field cannot pin — so the auth check likely isn't benefiting from the fra1 fix at all.
