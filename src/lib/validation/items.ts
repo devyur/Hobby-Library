@@ -90,10 +90,14 @@ export const quickAddItemSchema = z.object({
 export type QuickAddItemInput = z.infer<typeof quickAddItemSchema>;
 
 // Edit item form (issue #16, subtype editing added in #18):
-// status/rating/priority/subtype/notes/review -- title/category are
-// permanently out of scope for editing (see the issue's Out of scope
-// section), so this schema has no fields for them at all, unlike
-// addItemSchema above. subtypeId is required (not optional like
+// status/rating/priority/subtype -- title/category are permanently out of
+// scope for editing (see the issue's Out of scope section), so this schema
+// has no fields for them at all, unlike addItemSchema above. notes/review
+// were removed from this schema in issue #48: they now save independently
+// through their own Server Actions (updateNotesAction/updateReviewAction in
+// lib/actions/items.ts), never through this shared form's submit -- keeping
+// them here would let a main-form save silently clobber a value saved
+// independently moments before or after it. subtypeId is required (not optional like
 // rating/priority) since #16 already required a subtype to exist on every
 // item and this form never lets it go blank -- same
 // `.min(1).uuid()` shape as addItemSchema's own subtypeId, scoped at the
@@ -147,9 +151,6 @@ export const editItemSchema = z.object({
   ),
 
   priority: z.preprocess(emptyToUndefined, z.enum(priorityLevelValues).optional()),
-
-  notes: z.preprocess(emptyToUndefined, z.string().trim().optional()),
-  review: z.preprocess(emptyToUndefined, z.string().trim().optional()),
 
   // Manually set/edit completed_at (issue #34). Always present in the edit
   // form regardless of status -- no cross-field tie to status or to

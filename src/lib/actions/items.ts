@@ -1,5 +1,6 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import {
@@ -328,9 +329,14 @@ export async function quickAddItemAction(
 // `.bind(null, itemId)` in the client component -- so its real signature as
 // passed to useActionState is (prevState, formData), same shape as
 // createItemAction/quickAddItemAction above. status, rating, priority,
-// subtype_id, notes, review, and completed_at are read from the client --
-// title and category_id remain permanently out of scope for editing (see
-// the issue's Out of scope section) and never appear in the update payload.
+// subtype_id, and completed_at are read from the client -- title and
+// category_id remain permanently out of scope for editing (see the issue's
+// Out of scope section) and never appear in the update payload. notes/review
+// were removed from this action's payload in issue #48: they now save
+// independently through updateNotesAction/updateReviewAction below, so this
+// action must never write notes/review at all (not even unchanged values) --
+// doing so could clobber a value saved independently moments before or after
+// this submit.
 //
 // Same client-pre-check + server-re-check shape as createItemAction: a
 // JS-disabled or hand-crafted direct submission is rejected the same way.
@@ -342,15 +348,15 @@ export async function quickAddItemAction(
 // plain "not found" formError a raw RLS-filtered zero-row result would
 // produce anyway, never a distinguishable Postgres/RLS error.
 //
-// Explicit-null clearing: parsed.data.rating/priority/notes/review/
-// completedAt are all `T | undefined` (the Zod schema's emptyToUndefined
-// preprocessing), and `value ?? null` below turns each `undefined` into an
-// explicit `null` in the object literal -- the key is always present in the
-// update payload, never omitted. This matters because Supabase's
-// `.update()` only touches keys present in its argument object; an omitted
-// (or `undefined`-valued, which JSON.stringify drops entirely) key leaves
-// the existing DB value untouched instead of clearing it -- same pattern
-// #16 already established, now also covering completed_at (#34).
+// Explicit-null clearing: parsed.data.rating/priority/completedAt are all
+// `T | undefined` (the Zod schema's emptyToUndefined preprocessing), and
+// `value ?? null` below turns each `undefined` into an explicit `null` in
+// the object literal -- the key is always present in the update payload,
+// never omitted. This matters because Supabase's `.update()` only touches
+// keys present in its argument object; an omitted (or `undefined`-valued,
+// which JSON.stringify drops entirely) key leaves the existing DB value
+// untouched instead of clearing it -- same pattern #16 already established,
+// now also covering completed_at (#34).
 export async function updateItemAction(
   itemId: string,
   _prevState: ItemFormState,
@@ -361,8 +367,6 @@ export async function updateItemAction(
     subtypeId: formData.get("subtypeId"),
     rating: formData.get("rating"),
     priority: formData.get("priority"),
-    notes: formData.get("notes"),
-    review: formData.get("review"),
     completedAt: formData.get("completedAt"),
   });
 
@@ -439,8 +443,6 @@ export async function updateItemAction(
       subtype_id: parsed.data.subtypeId,
       rating: parsed.data.rating ?? null,
       priority: parsed.data.priority ?? null,
-      notes: parsed.data.notes ?? null,
-      review: parsed.data.review ?? null,
       // UTC midnight for the given calendar date (issue #34's Constraints)
       // -- matches the UTC month-bucketing getDashboardData()/
       // CompletionTrends.tsx already assume when deriving `month` from
@@ -546,6 +548,176 @@ export async function deleteItemAction(
   // .is("deleted_at", null) filter), so this redirects to the category
   // library view instead, matching the issue's own acceptance criteria.
   redirect(`/${category.slug}`);
+}
+
+export type UpdateNotesActionResult = { notes: string | null } | { error: string };
+export type UpdateReviewActionResult =
+  | { review: string | null; showNudge: boolean }
+  | { error: string };
+export type MarkItemCompletedActionResult = { success: true } | { error: string };
+
+// Server Action backing NotesReview.tsx's always-interactive Notes editor
+// (issue #48 -- mirrors how Tags already saves independently, #17). No form,
+// no useActionState: called directly with the item id and the textarea's
+// current value, saved immediately, never bundled into
+// updateItemAction's payload (see that action's own comment on why notes/
+// review were removed from it). Notes never drives the #16/#48
+// "suggest marking Completed" nudge -- unlike updateReviewAction below,
+// this never inspects or returns anything about status.
+//
+// Ownership/not-found: same .eq("user_id", user.id).is("deleted_at", null)
+// shape as updateItemAction/getOwnedItem (lib/actions/tags.ts) -- never
+// relies on RLS (items_update_own) alone.
+export async function updateNotesAction(
+  itemId: string,
+  notes: string,
+): Promise<UpdateNotesActionResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "You must be signed in to edit this item." };
+  }
+
+  const { data: item } = await supabase
+    .from("items")
+    .select("id")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { error: "This item could not be found." };
+  }
+
+  // Empty/whitespace-only clears the field to an explicit null -- same
+  // "blank textarea means cleared, not an empty string stored" convention
+  // updateItemAction's emptyToUndefined -> `?? null` chain already
+  // established for this column.
+  const trimmed = notes.trim();
+  const value = trimmed === "" ? null : trimmed;
+
+  const { error } = await supabase.from("items").update({ notes: value }).eq("id", itemId);
+  if (error) {
+    return { error: "Failed to save notes. Please try again." };
+  }
+
+  return { notes: value };
+}
+
+// Server Action backing NotesReview.tsx's always-interactive Review editor
+// (issue #48). Same independent-save shape as updateNotesAction above, but
+// also owns the Review-triggered half of the #16 "suggest marking Completed"
+// nudge (plan.md §4) -- moved server-side here because, unlike the
+// rating-triggered nudge that still lives in ItemEditFormProvider.handleSubmit
+// (block-before-save, diffed against a page-load-time prop), Review can now
+// be saved while the main form is closed, so the client can no longer
+// reliably know the item's pre-save review or current status. This reads
+// both fresh, from the same lookup that already establishes ownership,
+// *before* applying the update -- and the save itself is never blocked by
+// the nudge check: it always goes through, and `showNudge` is just extra
+// information returned alongside the new value for the Review editor to act
+// on after the save settles.
+export async function updateReviewAction(
+  itemId: string,
+  review: string,
+): Promise<UpdateReviewActionResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "You must be signed in to edit this item." };
+  }
+
+  const { data: item } = await supabase
+    .from("items")
+    .select("id, review, status")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { error: "This item could not be found." };
+  }
+
+  const trimmed = review.trim();
+  const value = trimmed === "" ? null : trimmed;
+
+  const { error } = await supabase.from("items").update({ review: value }).eq("id", itemId);
+  if (error) {
+    return { error: "Failed to save the review. Please try again." };
+  }
+
+  // Computed against the value read *before* this update (item.review), not
+  // the just-written `value` -- same empty-to-filled diff the rating-driven
+  // nudge does client-side, just re-derived here against a freshly-read
+  // current row instead of a stale prop.
+  const currentReview = item.review;
+  const currentStatus = item.status as ItemStatus;
+  const reviewNewlyFilled = (!currentReview || currentReview.trim() === "") && value !== null;
+  const showNudge = reviewNewlyFilled && currentStatus !== "completed";
+
+  return { review: value, showNudge };
+}
+
+// Server Action backing the Review-triggered nudge banner's "Mark Completed"
+// button (issue #48) -- minimal and independent of ItemEditFormPrimary's own
+// form/state, since by design the Review nudge can appear while that form is
+// closed. Only ever sets status; never touches rating/priority/notes/review/
+// subtype/completed_at.
+//
+// Uses revalidatePath, not redirect -- the user must stay on the item detail
+// page (this can fire from the right column while the left column's main
+// form is mid-edit), and revalidatePath is what causes page.tsx's
+// server-rendered `status` prop -- which flows straight through
+// ItemEditFormProvider to StatusPill in the left column -- to refresh in
+// place.
+export async function markItemCompletedAction(
+  itemId: string,
+): Promise<MarkItemCompletedActionResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "You must be signed in to edit this item." };
+  }
+
+  const { data: item } = await supabase
+    .from("items")
+    .select("id, category_id")
+    .eq("id", itemId)
+    .eq("user_id", user.id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (!item) {
+    return { error: "This item could not be found." };
+  }
+
+  const { data: category } = await supabase
+    .from("categories")
+    .select("slug")
+    .eq("id", item.category_id)
+    .maybeSingle();
+  if (!category) {
+    return { error: "This item could not be found." };
+  }
+
+  const { error } = await supabase
+    .from("items")
+    .update({ status: "completed" })
+    .eq("id", itemId);
+  if (error) {
+    return { error: "Failed to update status. Please try again." };
+  }
+
+  revalidatePath(`/${category.slug}/${itemId}`);
+  return { success: true };
 }
 
 // Server Action backing LibraryView.tsx's search box (issue #22). A thin

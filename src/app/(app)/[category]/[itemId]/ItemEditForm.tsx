@@ -14,7 +14,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LocalDate } from "@/components/ui/LocalDate";
 import { Select } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import { formatDateOnly } from "@/lib/format";
 import { deleteItemAction, updateItemAction } from "@/lib/actions/items";
 import type { Database } from "@/lib/supabase/types";
@@ -58,10 +57,19 @@ const PRIORITY_OPTIONS = [
 // the fields this issue does make editable; the read-only "Completed:" row
 // in view mode is likewise unchanged, but edit mode gained its own editable
 // Completed date field in #34 (see the completedAt input further down).
+// Notes/Review were part of this same form through issue #47, but became
+// their own always-interactive editors in #48 (NotesReview.tsx, mirroring
+// ItemTagsEditor.tsx/#17) -- this file no longer reads or submits them at
+// all; see updateItemAction's own comment in lib/actions/items.ts for why.
 //
-// Pre-edit rating/review/status are needed at submit time to compute the
-// nudge's before/after diff -- passed down as props from the Server
-// Component (getItemDetail's own read), never re-fetched client-side.
+// Pre-edit rating/status are needed at submit time to compute the
+// rating-triggered nudge's before/after diff -- passed down as props from
+// the Server Component (getItemDetail's own read), never re-fetched
+// client-side. Review used to feed the same nudge check here too, but as of
+// #48 the Review-triggered half of that check moved server-side into
+// updateReviewAction (lib/actions/items.ts), since Review now saves
+// independently of this form and this component can no longer reliably
+// diff Review's pre-save value.
 //
 // categoryId/subtypeId/subtypeOptions (issue #18): categoryId is the item's
 // fixed, unchanged category (never itself editable here -- passed through
@@ -90,16 +98,19 @@ const PRIORITY_OPTIONS = [
 //   - `ItemEditFormPrimary` (rendered in page.tsx's left column) renders the
 //     status/rating/priority badges + Edit/Delete + delete-confirm + Added/
 //     Completed dates + Tags in view mode -- and, when isEditing is true,
-//     the *entire* edit-mode form (status/rating/priority/subtype inputs,
-//     dates+tags, notes/review textareas, save/cancel/nudge), unchanged
-//     from before. Edit mode isn't part of this layout request, so it isn't
-//     split across columns -- it still renders as the one unified block it
-//     always was, just now from within the left-column consumer.
-//   - `ItemEditFormNotesReview` (rendered in page.tsx's right column) shows
-//     the read-only Notes/Review view when not editing, and renders nothing
-//     while editing (its fields are part of the single form already
-//     rendered by ItemEditFormPrimary above).
+//     the edit-mode form (status/rating/priority/subtype inputs, dates+tags,
+//     save/cancel/nudge). Edit mode isn't part of this layout request, so
+//     it isn't split across columns -- it still renders as one unified block,
+//     just now from within the left-column consumer. Notes/Review are no
+//     longer part of this form as of #48 -- see ItemEditFormNotesReview
+//     below.
+//   - `ItemEditFormNotesReview` (rendered in page.tsx's right column) renders
+//     NotesReview.tsx's always-interactive Notes/Review editors (#48) --
+//     unlike before #48, this is no longer gated behind isEditing at all:
+//     Notes/Review stay visible and editable regardless of whether the left
+//     column's main form is open, since they save independently of it now.
 type ItemEditFormContextValue = {
+  itemId: string;
   notes: string | null;
   review: string | null;
   isEditing: boolean;
@@ -220,8 +231,8 @@ export function ItemEditFormProvider({
     setShowNudge(false);
     // Revert to the pre-edit selection -- subtypeId is controlled state that
     // survives the isEditing toggle (unlike the uncontrolled status/rating/
-    // priority/notes/review inputs, which simply remount with their
-    // defaultValue), so Cancel must explicitly discard an in-progress
+    // priority inputs, which simply remount with their defaultValue), so
+    // Cancel must explicitly discard an in-progress
     // subtype change here. A subtype created via SubtypePicker during this
     // edit is left in place either way (its own immediate DB write, not part
     // of this form's submission) -- only the item's own subtype_id selection
@@ -246,8 +257,6 @@ export function ItemEditFormProvider({
       subtypeId: formData.get("subtypeId"),
       rating: formData.get("rating"),
       priority: formData.get("priority"),
-      notes: formData.get("notes"),
-      review: formData.get("review"),
       completedAt: formData.get("completedAt"),
     });
 
@@ -268,20 +277,19 @@ export function ItemEditFormProvider({
       return;
     }
 
-    // Nudge trigger (plan.md §4): rating or review going from empty to
-    // filled on *this* save, and the status about to be submitted isn't
-    // already Completed. Re-editing an item that already has a
-    // rating/review (only changing priority, or 6 -> 8) never triggers
-    // this -- both checks compare against the pre-edit props, not against
-    // "is the new value non-empty".
+    // Nudge trigger (plan.md §4): rating going from empty to filled on
+    // *this* save, and the status about to be submitted isn't already
+    // Completed. Re-editing an item that already has a rating (only
+    // changing priority, or 6 -> 8) never triggers this -- the check
+    // compares against the pre-edit `rating` prop, not against "is the new
+    // value non-empty". Review used to contribute to this same check
+    // (reviewNewlyFilled) before issue #48 moved Review's save (and its own
+    // half of this nudge) into updateReviewAction -- see that action's
+    // comment in lib/actions/items.ts.
     const ratingNewlyFilled = rating === null && parsed.data.rating !== undefined;
-    const reviewNewlyFilled =
-      (!review || review.trim() === "") &&
-      parsed.data.review !== undefined &&
-      parsed.data.review.trim() !== "";
     const targetStatus = parsed.data.status;
 
-    if ((ratingNewlyFilled || reviewNewlyFilled) && targetStatus !== "completed") {
+    if (ratingNewlyFilled && targetStatus !== "completed") {
       event.preventDefault();
       setShowNudge(true);
     }
@@ -290,8 +298,9 @@ export function ItemEditFormProvider({
   // Backs both nudge buttons. "Mark Completed & Save" forces the Status
   // select to "completed" first; "Just save" (targetStatus = null) submits
   // with status left exactly as the user set it -- either way every other
-  // changed field (rating, review, notes, priority) is submitted too, since
-  // this resubmits the same form, not a stripped-down one.
+  // changed field this form still owns (rating, priority, subtype,
+  // completedAt) is submitted too, since this resubmits the same form, not
+  // a stripped-down one.
   function submitWithStatus(targetStatus: ItemStatus | null) {
     const form = formRef.current;
     if (!form) return;
@@ -343,6 +352,7 @@ export function ItemEditFormProvider({
   }
 
   const value: ItemEditFormContextValue = {
+    itemId,
     notes,
     review,
     isEditing,
@@ -399,8 +409,6 @@ export function ItemEditFormPrimary() {
     setSubtypeId,
     subtypeOptions,
     handleSubtypeCreated,
-    notes,
-    review,
     fieldErrors,
     formRef,
     formAction,
@@ -578,8 +586,8 @@ export function ItemEditFormPrimary() {
           is timezone-safe, matching getDashboardData()'s
           row.completed_at.slice(0, 7). Left empty clears completed_at to
           null on save (editItemSchema's emptyToUndefined + updateItemAction's
-          `?? null`), same explicit-null pattern rating/priority/notes/review
-          already use. Deliberately NOT read by the #16 nudge's
+          `?? null`), same explicit-null pattern rating/priority already use.
+          Deliberately NOT read by the #16 nudge's
           submitWithStatus -- that only forces the Status select and
           resubmits this same form, so whatever the user already typed here
           (or left blank) rides along unchanged. */}
@@ -601,16 +609,6 @@ export function ItemEditFormPrimary() {
       </div>
 
       {renderDatesAndTags()}
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="notes">Notes</Label>
-        <Textarea id="notes" name="notes" rows={3} defaultValue={notes ?? ""} />
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="review">Review</Label>
-        <Textarea id="review" name="review" rows={4} defaultValue={review ?? ""} />
-      </div>
 
       {showNudge ? (
         <div className="flex flex-col gap-3 rounded-md border border-border bg-surface p-4">
@@ -647,13 +645,13 @@ export function ItemEditFormPrimary() {
   );
 }
 
-// Right column: Notes/Review view only. Renders nothing while isEditing --
-// the Notes/Review textareas are part of the single edit form rendered by
-// ItemEditFormPrimary above.
+// Right column: Notes/Review, always-interactive (issue #48) -- unlike
+// before #48, this no longer returns null while ItemEditFormPrimary's
+// isEditing is true. Notes/Review save independently of that form now (their
+// own Server Actions in NotesReview.tsx), so they must stay visible and
+// editable regardless of whether status/rating/priority/subtype/dates are
+// mid-edit in the left column.
 export function ItemEditFormNotesReview() {
-  const { isEditing, notes, review } = useItemEditFormContext("ItemEditFormNotesReview");
-  if (isEditing) {
-    return null;
-  }
-  return <NotesReview notes={notes} review={review} />;
+  const { itemId, notes, review } = useItemEditFormContext("ItemEditFormNotesReview");
+  return <NotesReview itemId={itemId} notes={notes} review={review} />;
 }

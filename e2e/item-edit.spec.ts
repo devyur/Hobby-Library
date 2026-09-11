@@ -13,12 +13,19 @@ import {
 // detail page (no /edit route, no modal), including the two behaviors QA
 // most needs live-checked: (1) clearing a previously-set field actually
 // writes NULL to the row rather than silently no-oping (Supabase's
-// .update() drops undefined-valued keys), and (2) the "mark Completed?"
-// nudge fires exactly on its documented condition -- rating/review
-// transitioning empty -> filled on *this* save, target status not already
-// Completed -- and never on an unrelated field change. Each test registers
-// its own disposable account via the real UI and deletes it afterward, same
-// convention as item-detail.spec.ts/add-item.spec.ts.
+// .update() drops undefined-valued keys), and (2) the rating-triggered
+// "mark Completed?" nudge fires exactly on its documented condition --
+// rating transitioning empty -> filled on *this* save, target status not
+// already Completed -- and never on an unrelated field change. Each test
+// registers its own disposable account via the real UI and deletes it
+// afterward, same convention as item-detail.spec.ts/add-item.spec.ts.
+//
+// Notes/Review are no longer part of this form as of issue #48 -- they
+// became their own always-interactive editors (NotesReview.tsx), saved via
+// their own Server Actions independent of this one, with their own
+// Review-triggered nudge. See e2e/item-notes-review.spec.ts for that
+// coverage; this file only asserts that a main-form save/cancel never
+// touches notes/review at all (the regression #48 specifically flagged).
 
 async function registerViaUI(page: Page, email: string) {
   await page.goto("/register");
@@ -103,7 +110,12 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       await page.getByLabel(/rating/i).fill("9");
       await page.getByLabel("Priority").selectOption({ label: "High" });
-      await page.getByLabel("Notes").fill("Changed notes");
+
+      // Notes/Review (issue #48) stay visible and editable the whole time,
+      // completely independent of this form's own edit/cancel -- opening
+      // this form never hid them, and Cancel here must never touch them.
+      await expect(page.getByText("Original notes")).toBeVisible();
+      await expect(page.getByText("Original review")).toBeVisible();
 
       await page.getByRole("button", { name: /^cancel$/i }).click();
 
@@ -129,7 +141,7 @@ test.describe("Edit item -- core fields (issue #16)", () => {
     }
   });
 
-  test("clearing a previously-set rating, priority, notes, and review writes NULL to each column, not a silent no-op", async ({
+  test("clearing a previously-set rating and priority writes NULL to each column, not a silent no-op -- and never touches notes/review", async ({
     page,
   }) => {
     // Registration + a real Server Action POST + a redirect-triggered
@@ -161,11 +173,9 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       await page.getByLabel(/rating/i).fill("");
       await page.getByLabel("Priority").selectOption({ label: "None" });
-      await page.getByLabel("Notes").fill("");
-      await page.getByLabel("Review").fill("");
 
-      // All four fields are going from filled -> empty, not empty -> filled
-      // -- the nudge must not intercept this save.
+      // Both fields are going from filled -> empty, not empty -> filled --
+      // the nudge must not intercept this save.
       await page.getByRole("button", { name: /^save$/i }).click();
       // The edit-mode toggle happens in place at the same URL (no /edit
       // route), so waitForURL wouldn't observe the round trip -- wait for
@@ -179,14 +189,20 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       await expect(page.getByText(/\/10/)).toHaveCount(0);
       await expect(page.getByText(/^(Low|Medium|High)$/)).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Notes" })).toHaveCount(0);
-      await expect(page.getByRole("heading", { name: "Review" })).toHaveCount(0);
+      // Notes/Review are untouched by this save (issue #48's specific
+      // regression concern) -- both still visible from before this test's
+      // main-form save ever happened.
+      await expect(page.getByText("Notes to clear")).toBeVisible();
+      await expect(page.getByText("Review to clear")).toBeVisible();
 
       // The critical live check: NULL actually reached the row, not just
       // "the UI stopped showing the old value" (which a silently-ignored
       // update would also produce, since view mode simply wouldn't have
       // been re-fetched with the stale value... except it is re-fetched,
-      // via the redirect -- so this DB read is the real assertion).
+      // via the redirect -- so this DB read is the real assertion). notes/
+      // review are asserted unchanged from their pre-save values -- proof
+      // this main-form save never wrote them at all, per updateItemAction's
+      // own #48 comment.
       const { data: row } = await user
         .from("items")
         .select("rating, priority, notes, review")
@@ -194,8 +210,8 @@ test.describe("Edit item -- core fields (issue #16)", () => {
         .single();
       expect(row?.rating).toBeNull();
       expect(row?.priority).toBeNull();
-      expect(row?.notes).toBeNull();
-      expect(row?.review).toBeNull();
+      expect(row?.notes).toBe("Notes to clear");
+      expect(row?.review).toBe("Review to clear");
 
       await user.auth.signOut();
     } finally {
@@ -203,7 +219,7 @@ test.describe("Edit item -- core fields (issue #16)", () => {
     }
   });
 
-  test("nudge fires when rating/review newly filled and status isn't Completed; 'Just save' saves everything without touching status", async ({
+  test("nudge fires when rating newly filled and status isn't Completed; 'Just save' saves everything without touching status", async ({
     page,
   }) => {
     test.setTimeout(60_000);
@@ -231,8 +247,6 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       await page.getByLabel(/rating/i).fill("8");
       await page.getByLabel("Priority").selectOption({ label: "High" });
-      await page.getByLabel("Notes").fill("Some notes");
-      await page.getByLabel("Review").fill("A great review");
 
       await page.getByRole("button", { name: /^save$/i }).click();
 
@@ -242,6 +256,10 @@ test.describe("Edit item -- core fields (issue #16)", () => {
         page.getByText(/sounds like you.?re done with this one/i),
       ).toBeVisible();
       expect(page.url()).toContain(`/${categorySlug}/${itemId}`);
+      // Three buttons -- unlike the Review-triggered nudge (two buttons,
+      // e2e/item-notes-review.spec.ts), this one still offers "Just save"
+      // since it's block-before-save with a pending unsaved form.
+      await expect(page.getByRole("button", { name: /^just save$/i })).toBeVisible();
 
       await page.getByRole("button", { name: /^just save$/i }).click();
       await expect(page.getByRole("button", { name: /^edit$/i })).toBeVisible({
@@ -253,8 +271,6 @@ test.describe("Edit item -- core fields (issue #16)", () => {
       await expect(page.getByText("Planned")).toBeVisible();
       await expect(page.getByText("8/10")).toBeVisible();
       await expect(page.getByText("High")).toBeVisible();
-      await expect(page.getByText("Some notes")).toBeVisible();
-      await expect(page.getByText("A great review")).toBeVisible();
 
       const { data: row } = await user
         .from("items")
@@ -264,6 +280,9 @@ test.describe("Edit item -- core fields (issue #16)", () => {
       expect(row?.status).toBe("planned");
       expect(row?.rating).toBe(8);
       expect(row?.priority).toBe("high");
+      // Notes/Review were never touched by this main-form save (#48).
+      expect(row?.notes).toBeNull();
+      expect(row?.review).toBeNull();
       expect(row?.completed_at).toBeNull();
 
       await user.auth.signOut();
@@ -300,10 +319,12 @@ test.describe("Edit item -- core fields (issue #16)", () => {
       await page.goto(`/${categorySlug}/${itemId}`);
       await page.getByRole("button", { name: /^edit$/i }).click();
 
-      // Only the review is newly filled -- rating stays empty. Status left
-      // at "Ongoing" in the select; the nudge itself must be what sets it
-      // to Completed, never an automatic side effect of adding a review.
-      await page.getByLabel("Review").fill("Loved it, finished last night");
+      // Rating is newly filled -- as of issue #48, Review no longer lives
+      // in this form at all (see e2e/item-notes-review.spec.ts for its own,
+      // separately-triggered nudge). Status left at "Ongoing" in the
+      // select; the nudge itself must be what sets it to Completed, never
+      // an automatic side effect of adding a rating.
+      await page.getByLabel(/rating/i).fill("9");
 
       await page.getByRole("button", { name: /^save$/i }).click();
       await expect(
@@ -316,15 +337,16 @@ test.describe("Edit item -- core fields (issue #16)", () => {
       });
 
       await expect(page.getByText("Completed", { exact: true })).toBeVisible();
-      await expect(page.getByText("Loved it, finished last night")).toBeVisible();
+      await expect(page.getByText("9/10")).toBeVisible();
 
       const { data: row } = await user
         .from("items")
-        .select("status, review, completed_at")
+        .select("status, rating, review, completed_at")
         .eq("id", itemId)
         .single();
       expect(row?.status).toBe("completed");
-      expect(row?.review).toBe("Loved it, finished last night");
+      expect(row?.rating).toBe(9);
+      expect(row?.review).toBeNull();
       // The nudge only forces status -- it never reads/defaults the
       // Completed date field (issue #34), so an untouched (blank) field
       // stays null even when status becomes Completed through the nudge.
@@ -337,7 +359,7 @@ test.describe("Edit item -- core fields (issue #16)", () => {
     }
   });
 
-  test("re-editing an item that already has a rating/review never triggers the nudge -- only changing priority, or an existing rating 6 -> 8, saves immediately", async ({
+  test("re-editing an item that already has a rating never triggers the nudge -- only changing priority, or an existing rating 6 -> 8, saves immediately", async ({
     page,
   }) => {
     test.setTimeout(60_000);
@@ -358,6 +380,9 @@ test.describe("Edit item -- core fields (issue #16)", () => {
         priority: "medium",
         review: "Already reviewed this one",
       });
+      // review here is only a DB fixture proving this main-form re-save
+      // leaves it alone (#48) -- it's asserted unchanged below, never
+      // interacted with through this form.
 
       await page.goto(`/${categorySlug}/${itemId}`);
       await page.getByRole("button", { name: /^edit$/i }).click();
@@ -367,8 +392,8 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       await page.getByRole("button", { name: /^save$/i }).click();
 
-      // No nudge -- both rating and review were already filled before this
-      // save, so the empty -> filled transition never happened.
+      // No nudge -- rating was already filled before this save, so the
+      // empty -> filled transition never happened.
       await expect(
         page.getByText(/sounds like you.?re done with this one/i),
       ).toHaveCount(0);
@@ -389,12 +414,14 @@ test.describe("Edit item -- core fields (issue #16)", () => {
 
       const { data: row } = await user
         .from("items")
-        .select("status, rating, priority")
+        .select("status, rating, priority, review")
         .eq("id", itemId)
         .single();
       expect(row?.status).toBe("planned");
       expect(row?.rating).toBe(8);
       expect(row?.priority).toBe("high");
+      // Untouched by this main-form save (#48).
+      expect(row?.review).toBe("Already reviewed this one");
 
       await user.auth.signOut();
     } finally {

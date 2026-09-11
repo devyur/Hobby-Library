@@ -25,7 +25,19 @@ vi.mock("next/navigation", () => ({
   redirect: (...args: [string]) => redirectMock(...args),
 }));
 
-const { quickAddItemAction, updateItemAction, deleteItemAction } = await import("./items");
+const revalidatePathMock = vi.fn();
+vi.mock("next/cache", () => ({
+  revalidatePath: (...args: [string]) => revalidatePathMock(...args),
+}));
+
+const {
+  quickAddItemAction,
+  updateItemAction,
+  deleteItemAction,
+  updateNotesAction,
+  updateReviewAction,
+  markItemCompletedAction,
+} = await import("./items");
 const { initialItemFormState, initialDeleteItemActionState } = await import(
   "@/lib/validation/items"
 );
@@ -160,15 +172,17 @@ describe("quickAddItemAction", () => {
 });
 
 // Unit coverage for updateItemAction (issue #16; subtype editing added in
-// #18), focused on the things e2e coverage can exercise but not directly
-// inspect the call arguments for: (1) the ownership/not-found check never
+// #18; notes/review removed from this action's payload entirely in #48),
+// focused on the things e2e coverage can exercise but not directly inspect
+// the call arguments for: (1) the ownership/not-found check never
 // distinguishing another user's item from a nonexistent one, (2) the
 // explicit-null-vs-omitted-key clearing behavior -- that a cleared rating/
-// priority/notes/review is written as an explicit `null` in the update
-// payload, never left out of it (which Supabase's `.update()` would
-// silently ignore), and (3) the new subtype_id cross-check -- that a
-// submitted subtype not belonging to (or not visible within) the item's own
-// category is rejected before ever reaching `.update()`.
+// priority is written as an explicit `null` in the update payload, never
+// left out of it (which Supabase's `.update()` would silently ignore), (3)
+// the new subtype_id cross-check -- that a submitted subtype not belonging
+// to (or not visible within) the item's own category is rejected before
+// ever reaching `.update()`, and (4) that notes/review never appear in the
+// payload, even for a tampered submission that still sends them.
 const VALID_SUBTYPE_ID = "33333333-3333-4333-8333-333333333333";
 
 describe("updateItemAction", () => {
@@ -269,7 +283,7 @@ describe("updateItemAction", () => {
     expect(supabase.updateMock).not.toHaveBeenCalled();
   });
 
-  it("writes explicit null (not an omitted key) for a cleared rating, priority, notes, review, and completed date", async () => {
+  it("writes explicit null (not an omitted key) for a cleared rating, priority, and completed date", async () => {
     const supabase = fakeSupabaseForUpdate({
       user: { id: "user-1" },
       item: { id: "item-1", category_id: "cat-1" },
@@ -283,13 +297,11 @@ describe("updateItemAction", () => {
         "item-1",
         initialItemFormState,
         // Every clearable field submitted empty -- simulating a save that
-        // clears a previously-set rating/priority/notes/review/completedAt.
+        // clears a previously-set rating/priority/completedAt.
         editFormData({
           status: "ongoing",
           rating: "",
           priority: "",
-          notes: "",
-          review: "",
           completedAt: "",
         }),
       ),
@@ -302,16 +314,44 @@ describe("updateItemAction", () => {
       subtype_id: VALID_SUBTYPE_ID,
       rating: null,
       priority: null,
-      notes: null,
-      review: null,
       completed_at: null,
     });
     // Explicit key presence, not just an equal value -- `{ rating: undefined }`
     // would also satisfy toEqual's rating check but get silently dropped by
     // Supabase's own JSON serialization before ever reaching Postgres.
     expect(Object.keys(payload)).toEqual(
-      expect.arrayContaining(["rating", "priority", "notes", "review", "completed_at"]),
+      expect.arrayContaining(["rating", "priority", "completed_at"]),
     );
+  });
+
+  // Issue #48: notes/review are no longer part of this form at all -- a
+  // main-form save must never write them, even as a byproduct of an
+  // unrelated field change, since Notes/Review now save independently
+  // (updateNotesAction/updateReviewAction below) and could be clobbered by a
+  // stale/absent value from this form otherwise.
+  it("never includes notes or review in the update payload, even if a caller tries to submit them", async () => {
+    const supabase = fakeSupabaseForUpdate({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      subtype: { id: VALID_SUBTYPE_ID },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const formData = editFormData({ status: "ongoing" });
+    // Simulates a tampered/direct submission still carrying notes/review
+    // keys -- editItemSchema no longer declares these fields, so they must
+    // be silently ignored, not smuggled through into the update payload.
+    formData.set("notes", "Should never be written");
+    formData.set("review", "Should never be written either");
+
+    await expect(
+      updateItemAction("item-1", initialItemFormState, formData),
+    ).rejects.toThrow("REDIRECT:/games/item-1");
+
+    const payload = supabase.updateMock.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("notes");
+    expect(payload).not.toHaveProperty("review");
   });
 
   it("includes the submitted subtype_id but never category_id in the update payload, even when status is set to completed", async () => {
@@ -584,5 +624,327 @@ describe("deleteItemAction", () => {
 
     expect(result.error).toMatch(/failed to delete/i);
     expect(redirectMock).not.toHaveBeenCalled();
+  });
+});
+
+// Unit coverage for updateNotesAction/updateReviewAction/
+// markItemCompletedAction (issue #48) -- the three new independent Server
+// Actions backing NotesReview.tsx's always-interactive editors. Focused on
+// what e2e coverage can exercise live but not directly inspect the call
+// arguments for: (1) the same ownership/not-found shape every other action
+// in this module uses, (2) empty-string-trims-to-null clearing, and (3) the
+// Review-triggered nudge's check-after-save computation against a freshly
+// read `review`/`status`, not a client-supplied value.
+describe("updateNotesAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  function fakeSupabaseForNotes(options: {
+    user?: { id: string } | null;
+    item?: FakeRow;
+    updateError?: { message: string } | null;
+  }) {
+    const updateMock = vi.fn((payload: Record<string, unknown>) => {
+      void payload;
+      return { eq: async () => ({ error: options.updateError ?? null }) };
+    });
+    const fromMock = vi.fn((table: string) => {
+      if (table === "items") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ is: () => ({ maybeSingle: async () => ({ data: options.item ?? null }) }) }),
+            }),
+          }),
+          update: updateMock,
+        };
+      }
+      throw new Error(`Unexpected table in test: ${table}`);
+    });
+    return {
+      from: fromMock,
+      updateMock,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    };
+  }
+
+  it("rejects an unauthenticated request without touching the database", async () => {
+    const supabase = fakeSupabaseForNotes({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateNotesAction("item-1", "Some notes");
+
+    expect(result).toEqual({ error: expect.stringMatching(/signed in/i) });
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one", async () => {
+    const supabase = fakeSupabaseForNotes({ user: { id: "user-1" }, item: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateNotesAction("someone-elses-item", "Some notes");
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be found/i) });
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("saves a trimmed non-empty value", async () => {
+    const supabase = fakeSupabaseForNotes({ user: { id: "user-1" }, item: { id: "item-1" } });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateNotesAction("item-1", "  Working notes  ");
+
+    expect(result).toEqual({ notes: "Working notes" });
+    expect(supabase.updateMock).toHaveBeenCalledWith({ notes: "Working notes" });
+  });
+
+  it("clears to an explicit null for an empty/whitespace-only value, not an empty string", async () => {
+    const supabase = fakeSupabaseForNotes({ user: { id: "user-1" }, item: { id: "item-1" } });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateNotesAction("item-1", "   ");
+
+    expect(result).toEqual({ notes: null });
+    expect(supabase.updateMock).toHaveBeenCalledWith({ notes: null });
+  });
+
+  it("returns a clean error when the update fails", async () => {
+    const supabase = fakeSupabaseForNotes({
+      user: { id: "user-1" },
+      item: { id: "item-1" },
+      updateError: { message: "boom" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateNotesAction("item-1", "Notes");
+
+    expect(result).toEqual({ error: expect.stringMatching(/failed to save/i) });
+  });
+});
+
+describe("updateReviewAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+  });
+
+  function fakeSupabaseForReview(options: {
+    user?: { id: string } | null;
+    item?: (FakeRow & { review?: string | null; status?: string }) | null;
+    updateError?: { message: string } | null;
+  }) {
+    const updateMock = vi.fn((payload: Record<string, unknown>) => {
+      void payload;
+      return { eq: async () => ({ error: options.updateError ?? null }) };
+    });
+    const fromMock = vi.fn((table: string) => {
+      if (table === "items") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ is: () => ({ maybeSingle: async () => ({ data: options.item ?? null }) }) }),
+            }),
+          }),
+          update: updateMock,
+        };
+      }
+      throw new Error(`Unexpected table in test: ${table}`);
+    });
+    return {
+      from: fromMock,
+      updateMock,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    };
+  }
+
+  it("rejects an unauthenticated request without touching the database", async () => {
+    const supabase = fakeSupabaseForReview({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "Some review");
+
+    expect(result).toEqual({ error: expect.stringMatching(/signed in/i) });
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one", async () => {
+    const supabase = fakeSupabaseForReview({ user: { id: "user-1" }, item: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("someone-elses-item", "Some review");
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be found/i) });
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("saves a trimmed value and signals showNudge when the freshly-read current review was empty and status isn't completed", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: null, status: "ongoing" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "  This was great  ");
+
+    expect(result).toEqual({ review: "This was great", showNudge: true });
+    expect(supabase.updateMock).toHaveBeenCalledWith({ review: "This was great" });
+  });
+
+  it("does not signal showNudge when the current review was already non-empty (re-editing, not newly filled)", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: "An earlier draft", status: "ongoing" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "A revised review");
+
+    expect(result).toEqual({ review: "A revised review", showNudge: false });
+  });
+
+  it("does not signal showNudge when the current status is already completed", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: null, status: "completed" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "This was great");
+
+    expect(result).toEqual({ review: "This was great", showNudge: false });
+  });
+
+  it("clears to an explicit null for an empty value and never signals showNudge", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: "Something", status: "ongoing" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "   ");
+
+    expect(result).toEqual({ review: null, showNudge: false });
+    expect(supabase.updateMock).toHaveBeenCalledWith({ review: null });
+  });
+
+  it("still saves (the write is never blocked by the nudge check) even though it also signals showNudge", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: "", status: "planned" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "Loved it");
+
+    expect(supabase.updateMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ review: "Loved it", showNudge: true });
+  });
+
+  it("returns a clean error when the update fails", async () => {
+    const supabase = fakeSupabaseForReview({
+      user: { id: "user-1" },
+      item: { id: "item-1", review: null, status: "planned" },
+      updateError: { message: "boom" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await updateReviewAction("item-1", "Review");
+
+    expect(result).toEqual({ error: expect.stringMatching(/failed to save/i) });
+  });
+});
+
+describe("markItemCompletedAction", () => {
+  beforeEach(() => {
+    createClientMock.mockReset();
+    revalidatePathMock.mockClear();
+  });
+
+  function fakeSupabaseForMarkCompleted(options: {
+    user?: { id: string } | null;
+    item?: FakeRow;
+    category?: FakeRow;
+    updateError?: { message: string } | null;
+  }) {
+    const updateMock = vi.fn((payload: Record<string, unknown>) => {
+      void payload;
+      return { eq: async () => ({ error: options.updateError ?? null }) };
+    });
+    const fromMock = vi.fn((table: string) => {
+      if (table === "items") {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ is: () => ({ maybeSingle: async () => ({ data: options.item ?? null }) }) }),
+            }),
+          }),
+          update: updateMock,
+        };
+      }
+      if (table === "categories") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: options.category ?? null }) }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table in test: ${table}`);
+    });
+    return {
+      from: fromMock,
+      updateMock,
+      auth: { getUser: vi.fn().mockResolvedValue({ data: { user: options.user ?? null } }) },
+    };
+  }
+
+  it("rejects an unauthenticated request without touching the database", async () => {
+    const supabase = fakeSupabaseForMarkCompleted({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await markItemCompletedAction("item-1");
+
+    expect(result).toEqual({ error: expect.stringMatching(/signed in/i) });
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("treats another user's item id the same as a nonexistent one", async () => {
+    const supabase = fakeSupabaseForMarkCompleted({ user: { id: "user-1" }, item: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await markItemCompletedAction("someone-elses-item");
+
+    expect(result).toEqual({ error: expect.stringMatching(/could not be found/i) });
+    expect(supabase.updateMock).not.toHaveBeenCalled();
+  });
+
+  it("sets only status to completed and revalidates the item's own route instead of redirecting", async () => {
+    const supabase = fakeSupabaseForMarkCompleted({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await markItemCompletedAction("item-1");
+
+    expect(result).toEqual({ success: true });
+    expect(supabase.updateMock).toHaveBeenCalledWith({ status: "completed" });
+    expect(revalidatePathMock).toHaveBeenCalledWith("/games/item-1");
+    expect(redirectMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a clean error when the update fails, without revalidating", async () => {
+    const supabase = fakeSupabaseForMarkCompleted({
+      user: { id: "user-1" },
+      item: { id: "item-1", category_id: "cat-1" },
+      category: { slug: "games" },
+      updateError: { message: "boom" },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await markItemCompletedAction("item-1");
+
+    expect(result).toEqual({ error: expect.stringMatching(/failed to update/i) });
+    expect(revalidatePathMock).not.toHaveBeenCalled();
   });
 });

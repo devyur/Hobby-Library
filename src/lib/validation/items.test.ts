@@ -200,11 +200,14 @@ describe("quickAddItemSchema", () => {
 });
 
 // Unit tests for the Edit item form's schema (issue #16; subtypeId added in
-// #18) -- status/subtypeId/rating/priority/notes/review. No title/category
-// fields exist here at all (permanently out of scope for editing), unlike
-// addItemSchema. Unlike rating/priority/notes/review, subtypeId is required
-// -- same `.min(1).uuid()` shape as addItemSchema's own subtypeId -- since
-// every item always has a subtype and this form never lets it go blank.
+// #18; notes/review removed entirely in #48, now that they save
+// independently through updateNotesAction/updateReviewAction instead of
+// through this shared form -- see lib/actions/items.ts) --
+// status/subtypeId/rating/priority. No title/category fields exist here at
+// all (permanently out of scope for editing), unlike addItemSchema. Unlike
+// rating/priority, subtypeId is required -- same `.min(1).uuid()` shape as
+// addItemSchema's own subtypeId -- since every item always has a subtype
+// and this form never lets it go blank.
 describe("editItemSchema", () => {
   function minimumValidEdit(overrides: Record<string, unknown> = {}) {
     return {
@@ -212,20 +215,27 @@ describe("editItemSchema", () => {
       subtypeId: VALID_UUID_B,
       rating: "",
       priority: "",
-      notes: "",
-      review: "",
       ...overrides,
     };
   }
 
-  it("accepts status-only input, with rating/priority/notes/review left undefined", () => {
+  it("accepts status-only input, with rating/priority left undefined", () => {
     const result = editItemSchema.safeParse(minimumValidEdit());
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.rating).toBeUndefined();
       expect(result.data.priority).toBeUndefined();
-      expect(result.data.notes).toBeUndefined();
-      expect(result.data.review).toBeUndefined();
+    }
+  });
+
+  it("has no notes/review fields at all -- they save independently, never through this schema", () => {
+    const result = editItemSchema.safeParse(
+      minimumValidEdit({ notes: "Some notes", review: "Some review" }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("notes");
+      expect(result.data).not.toHaveProperty("review");
     }
   });
 
@@ -247,14 +257,12 @@ describe("editItemSchema", () => {
     },
   );
 
-  it("accepts a full field set including rating, priority, notes, and review", () => {
+  it("accepts a full field set including rating and priority", () => {
     const result = editItemSchema.safeParse(
       minimumValidEdit({
         status: "completed",
         rating: "8",
         priority: "medium",
-        notes: "Some notes",
-        review: "Some review",
       }),
     );
     expect(result.success).toBe(true);
@@ -262,8 +270,6 @@ describe("editItemSchema", () => {
       expect(result.data.status).toBe("completed");
       expect(result.data.rating).toBe(8);
       expect(result.data.priority).toBe("medium");
-      expect(result.data.notes).toBe("Some notes");
-      expect(result.data.review).toBe("Some review");
     }
   });
 
@@ -300,7 +306,7 @@ describe("editItemSchema", () => {
 
   // completedAt (issue #34): always optional at the schema level -- the
   // form always renders it, but leaving it blank is exactly how a user
-  // clears completed_at, same shape as rating/priority/notes/review.
+  // clears completed_at, same shape as rating/priority.
   describe("completedAt", () => {
     it("leaves completedAt undefined when the field is empty", () => {
       const result = editItemSchema.safeParse(minimumValidEdit());
