@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import { formatDate } from "@/lib/format";
+import { LocalDate } from "@/components/ui/LocalDate";
 import { permanentlyDeleteItemAction, restoreItemAction } from "@/lib/actions/trash";
 import type { TrashedItem } from "@/lib/queries/trash";
 
@@ -82,7 +82,10 @@ export function TrashList({ initialItems }: { initialItems: TrashedItem[] }) {
                 <span className="truncate font-medium text-text-primary">{item.title}</span>
                 <span className="text-sm text-text-secondary">
                   {item.categoryName} · {item.subtypeName} · Deleted{" "}
-                  {formatDate(item.deletedAt)}
+                  {/* LocalDate, not a direct formatDate() call -- issue #46:
+                      same server/client hydration-mismatch fix as
+                      ItemEditForm.tsx's "Added:" row; see LocalDate.tsx. */}
+                  <LocalDate iso={item.deletedAt} />
                 </span>
               </div>
 

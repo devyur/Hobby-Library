@@ -12,9 +12,10 @@ import { SubtypePicker, type SubtypeChoice } from "@/components/items/SubtypePic
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { LocalDate } from "@/components/ui/LocalDate";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDate, formatDateOnly } from "@/lib/format";
+import { formatDateOnly } from "@/lib/format";
 import { deleteItemAction, updateItemAction } from "@/lib/actions/items";
 import type { Database } from "@/lib/supabase/types";
 import {
@@ -311,7 +312,13 @@ export function ItemEditFormProvider({
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-text-secondary">
           <div className="flex gap-1">
             <dt className="font-medium text-text-primary">Added:</dt>
-            <dd>{formatDate(createdAt)}</dd>
+            {/* LocalDate, not a direct formatDate() call -- issue #46: this
+                row renders from both the server (page.tsx's SSR pass) and
+                the client (this is a client component, remounted on the
+                isEditing toggle etc.), so a genuine local-time value here
+                can hydration-mismatch near a local-midnight boundary. See
+                LocalDate.tsx's own comment for the full explanation. */}
+            <dd><LocalDate iso={createdAt} /></dd>
           </div>
           {completedAt ? (
             <div className="flex gap-1">
