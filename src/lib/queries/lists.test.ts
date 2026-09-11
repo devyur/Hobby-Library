@@ -14,7 +14,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: (...args: unknown[]) => createClientMock(...args),
 }));
 
-const { getLists, getListDetail, getAddableItems } = await import("./lists");
+const { getLists, getListDetail, getAddableItems, getListsForItem } = await import("./lists");
 
 function fakeSupabase(options: {
   user?: { id: string } | null;
@@ -24,6 +24,7 @@ function fakeSupabase(options: {
   memberItems?: { data: unknown[] | null; error: { message: string } | null };
   addableMembers?: { data: unknown[] | null; error: { message: string } | null };
   addableItems?: { data: unknown[] | null; error: { message: string } | null };
+  itemMemberships?: { data: unknown[] | null; error: { message: string } | null };
 }) {
   // lists table: select().eq().order() (getLists) or
   // select().eq().eq().maybeSingle() (getListDetail).
@@ -75,6 +76,13 @@ function fakeSupabase(options: {
   const addableEqMock = vi.fn(() => ({ is: addableIsMock }));
   const itemsSelectMock = vi.fn(() => ({ eq: addableEqMock }));
 
+  // list_items table (getListsForItem): select("list_id").eq("item_id",
+  // itemId).in("list_id", listIds).
+  const itemMembershipInMock = vi
+    .fn()
+    .mockResolvedValue(options.itemMemberships ?? { data: [], error: null });
+  const itemMembershipEqMock = vi.fn(() => ({ in: itemMembershipInMock }));
+
   const fromMock = vi.fn((table: string) => {
     if (table === "lists") return { select: listsSelectMock };
     if (table === "list_items") {
@@ -82,6 +90,9 @@ function fakeSupabase(options: {
         select: (columns: string) => {
           if (columns === "item_id") {
             return { eq: addableMembersEqMock };
+          }
+          if (columns === "list_id") {
+            return { eq: itemMembershipEqMock };
           }
           return listItemsSelectMock();
         },
@@ -108,6 +119,8 @@ function fakeSupabase(options: {
     addableIsMock,
     addableOrderMock,
     addableNotMock,
+    itemMembershipEqMock,
+    itemMembershipInMock,
   };
 }
 
@@ -266,5 +279,68 @@ describe("getAddableItems", () => {
     expect(supabase.addableEqMock).toHaveBeenCalledWith("user_id", "user-1");
     expect(supabase.addableIsMock).toHaveBeenCalledWith("deleted_at", null);
     expect(supabase.addableNotMock).toHaveBeenCalledWith("id", "in", "(item-1)");
+  });
+});
+
+describe("getListsForItem", () => {
+  it("returns an empty list without querying the database when unauthenticated", async () => {
+    const supabase = fakeSupabase({ user: null });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getListsForItem("item-1");
+
+    expect(result).toEqual([]);
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty list without a second query when the caller owns no lists", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      lists: { data: [], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getListsForItem("item-1");
+
+    expect(result).toEqual([]);
+    expect(supabase.from).toHaveBeenCalledTimes(1);
+  });
+
+  it("flags each owned list with whether the given item is already a member", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      lists: {
+        data: [
+          { id: "list-1", name: "Play next" },
+          { id: "list-2", name: "Best games" },
+        ],
+        error: null,
+      },
+      itemMemberships: { data: [{ list_id: "list-2" }], error: null },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getListsForItem("item-1");
+
+    expect(result).toEqual([
+      { id: "list-1", name: "Play next", isMember: false },
+      { id: "list-2", name: "Best games", isMember: true },
+    ]);
+    expect(supabase.listsEqMock).toHaveBeenCalledWith("user_id", "user-1");
+    expect(supabase.itemMembershipEqMock).toHaveBeenCalledWith("item_id", "item-1");
+    expect(supabase.itemMembershipInMock).toHaveBeenCalledWith("list_id", ["list-1", "list-2"]);
+  });
+
+  it("degrades to every list unchecked (rather than failing the section) on a membership read error", async () => {
+    const supabase = fakeSupabase({
+      user: { id: "user-1" },
+      lists: { data: [{ id: "list-1", name: "Play next" }], error: null },
+      itemMemberships: { data: null, error: { message: "boom" } },
+    });
+    createClientMock.mockResolvedValue(supabase);
+
+    const result = await getListsForItem("item-1");
+
+    expect(result).toEqual([{ id: "list-1", name: "Play next", isMember: false }]);
   });
 });

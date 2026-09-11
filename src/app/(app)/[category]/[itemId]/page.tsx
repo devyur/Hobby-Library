@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { CoverUploadControl } from "@/components/items/CoverUploadControl";
 import { ItemAttachmentsEditor } from "@/components/items/ItemAttachmentsEditor";
 import { ItemLinksEditor } from "@/components/items/ItemLinksEditor";
+import { ItemListsEditor } from "@/components/items/ItemListsEditor";
 import { getItemDetail } from "@/lib/queries/items";
+import { getListsForItem } from "@/lib/queries/lists";
 import { getSubtypes } from "@/lib/queries/subtypes";
 import { getTags } from "@/lib/queries/tags";
 import { createClient } from "@/lib/supabase/server";
@@ -79,6 +81,13 @@ export default async function ItemDetailPage({
     .filter((subtype) => subtype.categoryId === item.categoryId)
     .map((subtype) => ({ id: subtype.id, name: subtype.name }));
 
+  // Membership data for the Lists shortcut section (issue #41) -- every
+  // list the signed-in user owns, flagged with whether this item is
+  // already a member. `lists` has no category column (database-schema.md
+  // §3), so this is never filtered to item.categoryId the way
+  // subtypeOptions above is.
+  const itemLists = await getListsForItem(item.id);
+
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-10">
       {/* Title/subtype heading spans the full width above both columns --
@@ -91,16 +100,17 @@ export default async function ItemDetailPage({
       </div>
 
       {/* Two-column on wider viewports: cover, status/rating/actions, Added
-          date, Tags, Links, and Attachments stack in a left column; Notes
-          and Review sit alone in a right column (follow-up UI adjustment
-          after 6ef579d's initial two-column pass, per the human user's
-          visual QA on that layout -- the earlier arrangement put
+          date, Tags, Links, Attachments, and Lists stack in a left column;
+          Notes and Review sit alone in a right column (follow-up UI
+          adjustment after 6ef579d's initial two-column pass, per the human
+          user's visual QA on that layout -- the earlier arrangement put
           status/rating/actions/dates/tags at the top of the right column,
           ahead of Notes/Review, leaving the left column just the cover).
           Collapses to a single stacked column below md -- cover and
-          primary status/actions near the top, Links/Attachments/Notes/
-          Review after -- matching NavShell.tsx's shell breakpoint, since
-          the mobile/responsive pass (#31) hasn't touched this page yet.
+          primary status/actions near the top, Links/Attachments/Lists/
+          Notes/Review after -- matching NavShell.tsx's shell breakpoint,
+          since the mobile/responsive pass (#31) hasn't touched this page
+          yet.
           ItemEditFormProvider wraps the whole grid and renders no DOM of
           its own (see ItemEditForm.tsx's header comment) -- it just shares
           isEditing/tags/etc. state between the two consumers placed below,
@@ -145,6 +155,14 @@ export default async function ItemDetailPage({
                 item.attachments, for the same "never unmounted by page.tsx"
                 reason ItemLinksEditor documents. */}
             <ItemAttachmentsEditor itemId={item.id} initialAttachments={item.attachments} />
+
+            {/* Always interactive, independent of ItemEditForm's Edit/Save
+                toggle (issue #41) -- same ItemLinksEditor/
+                ItemAttachmentsEditor precedent. Owns its own local lists
+                state, seeded from the server-rendered itemLists, for the
+                same "never unmounted by page.tsx" reason those components'
+                header comments document. */}
+            <ItemListsEditor itemId={item.id} initialLists={itemLists} />
           </div>
 
           <div className="flex flex-col gap-8">

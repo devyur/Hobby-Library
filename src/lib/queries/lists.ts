@@ -200,6 +200,74 @@ export async function getListDetail(listId: string): Promise<ListDetail | null> 
   };
 }
 
+export interface ListMembership {
+  id: string;
+  name: string;
+  isMember: boolean;
+}
+
+// [category]/[itemId]/page.tsx's "Lists" shortcut section (issue #41) --
+// every list the signed-in user owns, each flagged with whether the given
+// item is already a member, so ItemListsEditor.tsx can render one checkbox
+// per list without a per-list round trip. Same two-explicit-queries shape
+// as getLists above (a `lists` read, then a `list_items` read joined in JS)
+// rather than one deeply-nested embed. `list_items` has no user_id column
+// of its own -- membership is scoped to the caller by narrowing to
+// `listIds`, which is itself already `.eq("user_id", user.id)`-scoped, same
+// ownership-through-the-parent-list convention
+// addItemToListAction/removeItemFromListAction already use.
+export async function getListsForItem(itemId: string): Promise<ListMembership[]> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // request to /login before this route is ever reachable.
+    return [];
+  }
+
+  const { data: lists, error } = await supabase
+    .from("lists")
+    .select("id, name")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    // Swallowed rather than thrown, same convention as getLists: an item
+    // detail page that renders its Lists section empty because of a
+    // transient read error is better than one that crashes outright.
+    console.error("Failed to load lists for item:", error.message);
+    return [];
+  }
+  if (!lists || lists.length === 0) return [];
+
+  const listIds = lists.map((list) => list.id);
+
+  const { data: memberRows, error: memberError } = await supabase
+    .from("list_items")
+    .select("list_id")
+    .eq("item_id", itemId)
+    .in("list_id", listIds);
+
+  if (memberError) {
+    console.error("Failed to load list memberships:", memberError.message);
+    // Degrade to every checkbox unchecked rather than failing the whole
+    // section -- the names/ids above are still real and useful on their
+    // own, same degrade-on-error precedent as getLists' count query.
+    return lists.map((list) => ({ id: list.id, name: list.name, isMember: false }));
+  }
+
+  const memberIds = new Set((memberRows ?? []).map((row) => row.list_id));
+
+  return lists.map((list) => ({
+    id: list.id,
+    name: list.name,
+    isMember: memberIds.has(list.id),
+  }));
+}
+
 export interface AddableItem {
   id: string;
   title: string;
