@@ -10,7 +10,7 @@ import { ImportLibraryForm } from "@/components/settings/ImportLibraryForm";
 // Real Settings page (issue #11): the three things V1 Settings needs --
 // account email, sign-out, and the theme toggle. Replaces the #10 stub.
 //
-// middleware.ts (#9) already redirects unauthenticated requests to /login
+// proxy.ts (#9) already redirects unauthenticated requests to /login
 // before this ever renders, so the `if (!user)` branch below is a
 // defensive backstop (e.g. a session that expired between the middleware
 // check and this render), same pattern as dashboard/page.tsx.

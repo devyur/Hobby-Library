@@ -586,7 +586,7 @@ export async function getRecommendations(): Promise<RecommendationsData> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route is ever reachable.
     return { recommendedPlanned: [], randomPlanned: null, continueOngoing: [] };
   }

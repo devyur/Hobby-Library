@@ -2,7 +2,7 @@ import { getCategories } from "@/lib/queries/categories";
 
 import { QuickAddForm } from "./QuickAddForm";
 
-// Quick Add route (issue #15). Signed-in only -- middleware.ts already
+// Quick Add route (issue #15). Signed-in only -- proxy.ts already
 // redirects an unauthenticated request to /login before this ever renders.
 // Separate from Full Add (src/app/(app)/add/) -- no modal primitive exists
 // in src/components/ui/ yet, and this is deliberately a minimal two-field

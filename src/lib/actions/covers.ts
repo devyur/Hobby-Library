@@ -55,7 +55,7 @@ export async function uploadCoverAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route/action is ever reachable.
     return { error: "You must be signed in to upload a cover." };
   }
@@ -196,7 +196,7 @@ export async function removeCoverAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this action is ever reachable.
     return { error: "You must be signed in to remove a cover." };
   }

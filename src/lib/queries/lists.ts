@@ -33,7 +33,7 @@ export async function getLists(): Promise<ListSummary[]> {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route is ever reachable.
     return [];
   }
@@ -227,7 +227,7 @@ export async function getListsForItem(itemId: string): Promise<ListMembership[]>
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route is ever reachable.
     return [];
   }

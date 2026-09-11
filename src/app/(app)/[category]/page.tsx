@@ -43,6 +43,11 @@ import { createClient } from "@/lib/supabase/server";
 // LibraryView.tsx) is the one place that resolution happens, so both stay
 // in agreement about what "default" means for whichever dimension is
 // selected.
+//
+// Issue #58's sequential-query audit re-confirmed preferences->items is the
+// only genuine (result-dependent) sequential wait on this page, and found
+// one more, independent pair worth parallelizing: the category lookup and
+// the auth check below (see their own comment).
 export default async function CategoryPage({
   params,
 }: {
@@ -51,25 +56,27 @@ export default async function CategoryPage({
   const { category: slug } = await params;
 
   const supabase = await createClient();
-  const { data: category } = await supabase
-    .from("categories")
-    .select("id, name")
-    .eq("slug", slug)
-    .maybeSingle();
+
+  // Category lookup and the auth check are independent reads -- neither
+  // depends on the other's result -- so they run concurrently via
+  // Promise.all (issue #58's sequential-query audit) rather than awaiting
+  // the category first. The rare unknown-slug case now also fires the auth
+  // check before notFound() short-circuits (one harmless wasted read),
+  // which is cheaper than serializing the common case just to skip it.
+  const [{ data: category }, { data: { user } }] = await Promise.all([
+    supabase.from("categories").select("id, name").eq("slug", slug).maybeSingle(),
+    supabase.auth.getUser(),
+  ]);
 
   if (!category) {
     notFound();
   }
 
-  // middleware.ts (#9) already redirects unauthenticated requests to
+  // proxy.ts (#9) already redirects unauthenticated requests to
   // /login before this ever renders, so `user` being present here is
   // expected -- but items/preferences reads below need the id, so this
   // guards the (defensive-only, e.g. an expired session) null case the
   // same way settings/page.tsx does.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const preferences = user
     ? await supabase
         .from("user_preferences")

@@ -9,6 +9,21 @@ import { NextResponse, type NextRequest } from "next/server";
 // built on) isn't set up for -- this is the one place a distinct client is
 // warranted, per server.ts's own comment about middleware. Follows the
 // standard @supabase/ssr middleware pattern documented for Next.js.
+//
+// Renamed from middleware.ts -> proxy.ts (issue #58), via Next's official
+// `npx @next/codemod@canary middleware-to-proxy .` codemod: same file
+// content verbatim, only the file name and the exported function name
+// (middleware -> proxy) changed -- Next.js 16 deprecates the middleware.ts
+// convention in favor of proxy.ts, which defaults to the Node.js runtime
+// instead of Edge. That runtime switch is why this migration was worth
+// doing here specifically: Edge Runtime always executes in whichever
+// region is closest to the incoming request, which vercel.json's
+// `regions: ["fra1"]` (issue #51) cannot override, while a Node.js-runtime
+// Vercel Function can be pinned. See #58's issue comments/PR for whether
+// this file actually lands in fra1 in production, or whether Vercel's
+// "Routing Middleware ships to all regions" behavior turned out to apply
+// regardless of runtime -- either way, the auth/session-refresh logic
+// below is unchanged and still load-bearing for #9.
 
 // Reachable with no session -- everything else requires one.
 const PUBLIC_PATHS = new Set([
@@ -20,7 +35,7 @@ const PUBLIC_PATHS = new Set([
   "/auth/confirm",
 ]);
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(

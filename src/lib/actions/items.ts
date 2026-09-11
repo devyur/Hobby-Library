@@ -143,7 +143,7 @@ export async function createItemAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route/action is ever reachable.
     return { formError: "You must be signed in to add an item.", fieldErrors: {} };
   }
@@ -269,7 +269,7 @@ export async function quickAddItemAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route/action is ever reachable.
     return { formError: "You must be signed in to add an item.", fieldErrors: {} };
   }
@@ -380,7 +380,7 @@ export async function updateItemAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route/action is ever reachable.
     return { formError: "You must be signed in to edit an item.", fieldErrors: {} };
   }
@@ -509,7 +509,7 @@ export async function deleteItemAction(
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    // Defensive only -- middleware.ts already redirects an unauthenticated
+    // Defensive only -- proxy.ts already redirects an unauthenticated
     // request to /login before this route/action is ever reachable.
     return { error: "You must be signed in to delete an item." };
   }

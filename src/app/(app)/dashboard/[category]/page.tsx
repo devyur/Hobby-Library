@@ -31,24 +31,24 @@ export default async function CategoryDashboardPage({
   const { category: slug } = await params;
 
   const supabase = await createClient();
-  const { data: category } = await supabase
-    .from("categories")
-    .select("id, name")
-    .eq("slug", slug)
-    .maybeSingle();
+
+  // Category lookup and the auth check are independent reads (same
+  // reasoning as [category]/page.tsx's own copy of this pattern, added
+  // alongside it by issue #58's sequential-query audit) -- run them
+  // concurrently rather than awaiting the category lookup first.
+  const [{ data: category }, { data: { user } }] = await Promise.all([
+    supabase.from("categories").select("id, name").eq("slug", slug).maybeSingle(),
+    supabase.auth.getUser(),
+  ]);
 
   if (!category) {
     notFound();
   }
 
-  // middleware.ts (#9) already redirects unauthenticated requests to /login
+  // proxy.ts (#9) already redirects unauthenticated requests to /login
   // before this ever renders -- same defensive-only backstop dashboard/
   // page.tsx already has (e.g. a session that expired between the
-  // middleware check and this render).
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  // proxy.ts check and this render).
   if (!user) {
     redirect("/login");
   }

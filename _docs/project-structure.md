@@ -51,7 +51,7 @@ Why this split and not "one folder per route": several components (ItemCard, Sta
 
 `components/items/CoverUploadControl.tsx` (#47): the file-input pipeline's pre-check/resize/submit logic is a shared `submitFile(File)`, called by both the file `<input>` and a `paste` handler (the control is a focusable paste zone with a visible hint) — clipboard-paste is a second entry point into the same upload path, not a separate one.
 
-`src/middleware.ts` — Next.js middleware, used for Supabase session refresh on each request (standard requirement for Supabase SSR auth).
+`src/proxy.ts` — Next.js proxy (renamed from `middleware.ts` by #58, following Next 16's `middleware.ts` → `proxy.ts` deprecation; the exported function is `proxy`, not `middleware`), used for Supabase session refresh on each request (standard requirement for Supabase SSR auth). The rename also moves this off the Edge runtime onto Node.js by default — see #58's own findings on whether that actually gets it under `vercel.json`'s `fra1` region pin.
 
 ---
 
@@ -130,7 +130,7 @@ Hobby Library/
 │   │   ├── queries/
 │   │   ├── validation/
 │   │   └── constants.ts
-│   └── middleware.ts
+│   └── proxy.ts                        # renamed from middleware.ts (#58)
 ├── public/
 ├── .github/
 │   └── workflows/
@@ -138,7 +138,7 @@ Hobby Library/
 ├── .env.example
 ├── next.config.ts
 ├── tsconfig.json
-├── vercel.json                     # regions: ["fra1"] — pins serverless functions next to Supabase's eu-central-1 project (#51); doesn't cover Middleware, which runs on Vercel's separate Edge Runtime (see #58)
+├── vercel.json                     # regions: ["fra1"] — pins serverless functions next to Supabase's eu-central-1 project (#51); see #58 for whether the middleware.ts → proxy.ts move (Node.js runtime) actually brings src/proxy.ts under this pin
 └── package.json
 ```
 

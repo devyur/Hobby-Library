@@ -4,7 +4,7 @@ import { getTags } from "@/lib/queries/tags";
 
 import { AddItemForm } from "./AddItemForm";
 
-// Full Add form route (issue #14). Signed-in only -- middleware.ts already
+// Full Add form route (issue #14). Signed-in only -- proxy.ts already
 // redirects an unauthenticated request to /login before this ever renders.
 // Deliberately category-agnostic (not nested under [category]/): the form's
 // own Category dropdown is what drives the reactive Subtype filtering the
