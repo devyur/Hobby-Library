@@ -300,6 +300,10 @@ test.describe("Mobile polish: authenticated pages (issue #31)", () => {
           label: "/settings",
           cta: (p) => p.getByRole("button", { name: /^log out$/i }),
           formControl: (p) => p.getByRole("button", { name: /toggle theme/i }),
+          // Trash (issue #49): its nav entry moved here, so its new link's
+          // touch target is checked on Settings now instead of in the
+          // mobile nav panel below.
+          row: (p) => p.getByRole("link", { name: "Trash", exact: true }),
         },
       ];
 
@@ -338,14 +342,16 @@ test.describe("Mobile polish: authenticated pages (issue #31)", () => {
         // acceptance criterion, alongside the hamburger toggle above):
         // opening the panel from any (app) page must not introduce
         // overflow, and every destination link in it must meet the 44x44
-        // minimum -- was ~36px tall before this pass.
+        // minimum -- was ~36px tall before this pass. Sampled link is
+        // "Settings" (issue #49: Trash is no longer a panel entry, its
+        // touch target is checked on the /settings page above instead).
         await page.goto("/dashboard");
         await navToggle(page).click();
         const panel = page.locator("#mobile-nav-panel");
         await expect(panel, `mobile nav panel @ ${viewport.label}`).toBeVisible();
         await assertTouchTarget(
-          panel.getByRole("link", { name: "Trash", exact: true }),
-          `mobile nav panel "Trash" link @ ${viewport.label}`,
+          panel.getByRole("link", { name: "Settings", exact: true }),
+          `mobile nav panel "Settings" link @ ${viewport.label}`,
         );
         await assertNoOverflow(page, `/dashboard with nav panel open @ ${viewport.label}`);
       }

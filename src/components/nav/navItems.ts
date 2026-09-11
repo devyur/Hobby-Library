@@ -7,10 +7,14 @@ export interface NavItem {
 
 // Builds the ordered nav item list per plan.md §15 and issue #10 acceptance
 // criteria A/B: Dashboard, one entry per row in `categories` (already
-// sorted by sort_order by getCategories()), Custom Lists, Trash, Settings.
+// sorted by sort_order by getCategories()), Custom Lists, Settings.
 // No category name/slug is hardcoded here (AGENTS.md) -- `categories` is
 // the only source for the middle section, and each tab links to `/<slug>`
 // per project-structure.md §1's `[category]/` dynamic route decision.
+//
+// Trash (issue #10) is not a nav item as of issue #49: used infrequently,
+// its entry point moved to a link on the Settings page instead. `/trash`
+// itself is unchanged and still reachable directly or via last_screen.
 export function buildNavItems(categories: CategorySummary[]): NavItem[] {
   return [
     { label: "Dashboard", href: "/dashboard" },
@@ -19,7 +23,6 @@ export function buildNavItems(categories: CategorySummary[]): NavItem[] {
       href: `/${category.slug}`,
     })),
     { label: "Custom Lists", href: "/lists" },
-    { label: "Trash", href: "/trash" },
     { label: "Settings", href: "/settings" },
   ];
 }

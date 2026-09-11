@@ -87,6 +87,21 @@ export default async function SettingsPage() {
         </div>
         <ImportLibraryForm />
       </section>
+
+      {/* Trash entry point (issue #49): moved out of the main nav since it's
+          used infrequently. /trash itself is unchanged -- this is purely a
+          new place to reach it from. */}
+      <section className="flex items-center justify-between gap-4 rounded-lg border border-border bg-surface p-4">
+        <div>
+          <p className="text-sm text-text-secondary">Trash</p>
+          <p className="text-sm text-text-primary">
+            Restore or permanently delete items you&apos;ve removed
+          </p>
+        </div>
+        <Button asChild variant="outline">
+          <Link href="/trash">Trash</Link>
+        </Button>
+      </section>
     </div>
   );
 }

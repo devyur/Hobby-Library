@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildNavItems, isNavItemActive } from "./navItems";
 
 describe("buildNavItems", () => {
-  it("orders Dashboard, then categories in the given order, then Custom Lists, Trash, Settings", () => {
+  it("orders Dashboard, then categories in the given order, then Custom Lists, Settings", () => {
     const items = buildNavItems([
       { id: "1", slug: "games", name: "Games" },
       { id: "2", slug: "books", name: "Books" },
@@ -14,7 +14,6 @@ describe("buildNavItems", () => {
       { label: "Games", href: "/games" },
       { label: "Books", href: "/books" },
       { label: "Custom Lists", href: "/lists" },
-      { label: "Trash", href: "/trash" },
       { label: "Settings", href: "/settings" },
     ]);
   });
@@ -25,7 +24,6 @@ describe("buildNavItems", () => {
     expect(items).toEqual([
       { label: "Dashboard", href: "/dashboard" },
       { label: "Custom Lists", href: "/lists" },
-      { label: "Trash", href: "/trash" },
       { label: "Settings", href: "/settings" },
     ]);
   });

@@ -46,9 +46,10 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
 
       // AC B: exactly four category tabs, from the live seeded data (#3),
       // in sort_order -- interleaved with the fixed Dashboard/Custom
-      // Lists/Trash/Settings entries per plan.md §15. Nothing here
-      // hardcodes which four they are; this assertion is what proves the
-      // *live table* produced them, not the test's own expectations.
+      // Lists/Settings entries per plan.md §15 (Trash moved to Settings in
+      // issue #49, no longer a nav entry). Nothing here hardcodes which
+      // four they are; this assertion is what proves the *live table*
+      // produced them, not the test's own expectations.
       await expect(sidebar.getByRole("link")).toHaveText([
         "Dashboard",
         "Games",
@@ -56,7 +57,6 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
         "Audio",
         "Video",
         "Custom Lists",
-        "Trash",
         "Settings",
       ]);
 
@@ -74,7 +74,6 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
           ["Audio", "/audio", "Audio"],
           ["Video", "/video", "Video"],
           ["Custom Lists", "/lists", "Custom Lists"],
-          ["Trash", "/trash", "Trash"],
           ["Settings", "/settings", "Settings"],
           ["Dashboard", "/dashboard", null as unknown as string],
         ];
@@ -91,6 +90,17 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
           sidebar.getByRole("link", { name: label, exact: true }),
         ).toHaveAttribute("aria-current", "page");
       }
+
+      // Trash (issue #49): no longer a sidebar entry -- reached via a link
+      // on Settings instead. Click through from there to prove the new
+      // entry point actually works, not just that the sidebar lost a link.
+      await sidebar.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.waitForURL("**/settings");
+      await page.getByRole("link", { name: "Trash", exact: true }).click();
+      await page.waitForURL("**/trash");
+      await expect(
+        page.getByRole("heading", { name: "Trash", exact: true }),
+      ).toBeVisible();
 
       // Edge case: an unknown slug typed directly is a genuine 404, not a
       // shell-wrapped "coming soon" stub.
@@ -210,7 +220,6 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
         "Audio",
         "Video",
         "Custom Lists",
-        "Trash",
         "Settings",
       ]) {
         await expect(
@@ -223,13 +232,18 @@ test.describe("app shell & dynamic navigation (issue #10)", () => {
       );
       expect(scrollAfterOpen).toBe(false);
 
-      await panel.getByRole("link", { name: "Trash" }).click();
+      // Trash (issue #49): no longer in the mobile panel -- reached via
+      // Settings instead, same click-through as the desktop case above.
+      await panel.getByRole("link", { name: "Settings" }).click();
+      await page.waitForURL("**/settings");
+      // The panel closes itself after a navigation.
+      await expect(page.locator("#mobile-nav-panel")).toBeHidden();
+
+      await page.getByRole("link", { name: "Trash", exact: true }).click();
       await page.waitForURL("**/trash");
       await expect(
         page.getByRole("heading", { name: "Trash", exact: true }),
       ).toBeVisible();
-      // The panel closes itself after a navigation.
-      await expect(page.locator("#mobile-nav-panel")).toBeHidden();
     } finally {
       const userId = await getUserIdByEmail(admin, email);
       if (userId) await admin.auth.admin.deleteUser(userId);
