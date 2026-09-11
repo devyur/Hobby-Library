@@ -92,6 +92,7 @@ Hobby Library/
 │   │   │   └── confirm/route.ts        # completes the password-recovery email link
 │   │   ├── (app)/
 │   │   │   ├── layout.tsx              # nav shell (#10)
+│   │   │   ├── loading.tsx             # Suspense fallback (#59) — wraps only NavShell's <main> content; sidebar stays visible/interactive during it, since no segment below has its own nested layout
 │   │   │   ├── dashboard/
 │   │   │   │   ├── page.tsx            # stats (#27) + completion trends (#27/#43) + recommendations (#28), interactive dismiss/shuffle (#44)
 │   │   │   │   └── [category]/page.tsx # per-category stats drill-down (#50) — LibraryStats scoped by categoryId, no trends/recommendations
@@ -132,6 +133,7 @@ Hobby Library/
 │   │   └── constants.ts
 │   └── proxy.ts                        # renamed from middleware.ts (#58)
 ├── public/
+│   └── dragon-loading.gif              # loading.tsx's fallback asset (#59)
 ├── .github/
 │   └── workflows/
 │       └── supabase-keepalive.yml  # scheduled ping preventing free-tier Supabase pause (#32)
