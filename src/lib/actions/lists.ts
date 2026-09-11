@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { listNameSchema } from "@/lib/validation/lists";
+import { listNameSchema, reorderListItemsSchema } from "@/lib/validation/lists";
 
 type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
 
@@ -15,6 +15,7 @@ export type RenameListActionResult = { success: true } | { error: string };
 export type DeleteListActionResult = { success: true } | { error: string };
 export type AddItemToListActionResult = { success: true } | { error: string };
 export type RemoveItemFromListActionResult = { success: true } | { error: string };
+export type ReorderListItemsActionResult = { success: true } | { error: string };
 
 // Ownership/not-found check for a list, same shape as getOwnedItem in
 // lib/actions/tags.ts/links.ts -- a request naming another user's list id
@@ -171,6 +172,16 @@ export async function deleteListAction(listId: string): Promise<DeleteListAction
 // success (the item ends up a member either way, which is already true),
 // never surfaced as an unhandled error -- same pattern attachTagAction uses
 // for item_tags' own PK collision (lib/actions/tags.ts).
+//
+// sort_order (issue #42): a freshly-added item must land after every
+// existing member (ListDetailEditor.tsx's handleAddSubmit now appends
+// rather than prepends to match), so this reads the list's current highest
+// sort_order and inserts one past it -- an empty list (no rows yet) falls
+// back to 0. Read-then-write, not atomic against a concurrent add to the
+// same list from another tab/device; an occasional duplicate sort_order in
+// that rare race is a display-order nit, not a data-integrity problem
+// (sort_order carries no uniqueness constraint), so it's left un-guarded
+// rather than adding transaction/locking machinery for it.
 export async function addItemToListAction(
   listId: string,
   itemId: string,
@@ -194,9 +205,19 @@ export async function addItemToListAction(
     return { error: "This item could not be found." };
   }
 
+  const { data: highest } = await supabase
+    .from("list_items")
+    .select("sort_order")
+    .eq("list_id", listId)
+    .order("sort_order", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextSortOrder = (highest?.sort_order ?? -1) + 1;
+
   const { error } = await supabase
     .from("list_items")
-    .insert({ list_id: listId, item_id: itemId });
+    .insert({ list_id: listId, item_id: itemId, sort_order: nextSortOrder });
 
   if (error && error.code !== "23505") {
     return { error: "Failed to add item to list. Please try again." };
@@ -237,6 +258,89 @@ export async function removeItemFromListAction(
 
   if (error) {
     return { error: "Failed to remove item from list. Please try again." };
+  }
+
+  return { success: true };
+}
+
+// Reorder (issue #42) -- ListDetailEditor.tsx's drag handles call this once
+// per drop with the *entire* new member order (every current member's
+// item_id, front to back), never once per row/intermediate drag frame, per
+// the issue's own "one Server Action call per drop" constraint. getOwnedList
+// gates it the same way every other action in this file does -- a listId
+// naming another user's list resolves to the same plain not-found error
+// addItemToListAction/removeItemFromListAction already give, never a
+// distinguishable one, and list_items_update_own RLS (migration
+// 20260908150000) is never relied on alone.
+//
+// Beyond ownership, the *set* of ids sent back is checked against the
+// list's actual current members before anything is written: not the same
+// size, or naming an id that isn't currently a member (a stale client, or a
+// crafted payload trying to fold in some other item_id/list_id combination)
+// is rejected up front with the same generic error, rather than trusting
+// the client's array outright and letting list_items_insert_own RLS's own
+// item-ownership check be the only thing standing in the way.
+//
+// The write itself is one upsert() call covering every row (one round trip,
+// matching the issue's constraint), keyed on the table's own (list_id,
+// item_id) primary key -- since every row named here already exists as a
+// member, this always takes Postgres' ON CONFLICT DO UPDATE path (never the
+// INSERT path), and only touches the `sort_order` column: `added_at` is
+// left untouched because it's never part of the upsert payload.
+export async function reorderListItemsAction(
+  listId: string,
+  itemIds: string[],
+): Promise<ReorderListItemsActionResult> {
+  const parsed = reorderListItemsSchema.safeParse({ itemIds });
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0]?.message ?? "Invalid reorder request." };
+  }
+
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { error: "You must be signed in to manage lists." };
+  }
+
+  const list = await getOwnedList(supabase, listId, user.id);
+  if (!list) {
+    return { error: "This list could not be found." };
+  }
+
+  const { data: currentMembers, error: currentMembersError } = await supabase
+    .from("list_items")
+    .select("item_id")
+    .eq("list_id", listId);
+
+  if (currentMembersError) {
+    return { error: "Failed to save the new order. Please try again." };
+  }
+
+  const currentMemberIds = new Set((currentMembers ?? []).map((row) => row.item_id));
+  const requestedIds = parsed.data.itemIds;
+  const sameMembership =
+    requestedIds.length === currentMemberIds.size &&
+    requestedIds.every((id) => currentMemberIds.has(id));
+
+  if (!sameMembership) {
+    return { error: "Failed to save the new order. Please try again." };
+  }
+
+  const rows = requestedIds.map((itemId, index) => ({
+    list_id: listId,
+    item_id: itemId,
+    sort_order: index,
+  }));
+
+  const { error } = await supabase
+    .from("list_items")
+    .upsert(rows, { onConflict: "list_id,item_id" });
+
+  if (error) {
+    return { error: "Failed to save the new order. Please try again." };
   }
 
   return { success: true };

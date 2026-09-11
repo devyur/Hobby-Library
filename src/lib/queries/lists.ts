@@ -107,9 +107,12 @@ export interface ListDetail {
 // (issue #26's explicit display rule) rather than just reshaping the
 // embedded object -- the underlying list_items row for that trashed item is
 // never touched by this read, only left out of what's returned. Ordered by
-// `added_at desc` (newest-added-first, per the issue's acceptance
-// criteria) -- `list_items.sort_order` is never read/ordered by here, V1
-// ships insertion order only (drag-reordering is #42).
+// `sort_order` ascending (issue #42: manual drag order, replacing the old
+// `added_at desc`/newest-added-first read) -- `added_at` is kept as a
+// secondary sort only, so rows that still share the column's `0` default
+// (every row inserted before #42, or several dragged to the same spot
+// before a save landed) fall back to a stable oldest-first order rather
+// than an unspecified/database-dependent one.
 export async function getListDetail(listId: string): Promise<ListDetail | null> {
   const supabase = await createClient();
 
@@ -151,7 +154,8 @@ export async function getListDetail(listId: string): Promise<ListDetail | null> 
     )
     .eq("list_id", listId)
     .is("items.deleted_at", null)
-    .order("added_at", { ascending: false });
+    .order("sort_order", { ascending: true })
+    .order("added_at", { ascending: true });
 
   if (itemsError) {
     console.error("Failed to load list items:", itemsError.message);

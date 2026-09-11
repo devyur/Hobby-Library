@@ -301,7 +301,9 @@ test.describe("Custom lists (issue #26)", () => {
       await expect(picker.locator(`option[value="${otherItem.itemId}"]`)).toHaveCount(0);
 
       // Add the game item first, then the book item -- member list displays
-      // newest-added-first (added_at desc), so the book item ends up on top.
+      // manual sort_order order (issue #42), and a freshly-added item
+      // appends to the END of the list, so the game item (added first)
+      // stays on top and the book item lands below it.
       await picker.selectOption(gameItem.itemId);
       await page.getByRole("button", { name: /^add to list$/i }).click();
       await expect(rows(page).filter({ hasText: "Chrono Trigger" })).toBeVisible();
@@ -314,14 +316,14 @@ test.describe("Custom lists (issue #26)", () => {
 
       const memberRows = rows(page);
       await expect(memberRows).toHaveCount(2);
-      await expect(memberRows.nth(0)).toContainText("Dune");
-      await expect(memberRows.nth(1)).toContainText("Chrono Trigger");
+      await expect(memberRows.nth(0)).toContainText("Chrono Trigger");
+      await expect(memberRows.nth(1)).toContainText("Dune");
 
       // Remove the game item -- its own list_items row goes away, the item
       // itself is untouched, and it reappears as a picker candidate.
       await memberRows
         .filter({ hasText: "Chrono Trigger" })
-        .getByRole("button", { name: /^remove$/i })
+        .getByRole("button", { name: /^remove chrono trigger$/i })
         .click();
       await expect(rows(page).filter({ hasText: "Chrono Trigger" })).toHaveCount(0, {
         timeout: 15_000,

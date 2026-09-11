@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Unit coverage for lib/queries/lists.ts (issue #26), mirroring
-// lib/queries/trash.test.ts's mocked-client shape: isolates the query
-// shape (explicit user_id/ownership scoping, the items!inner join that
-// makes `.is("items.deleted_at", null)` actually exclude a trashed
-// member's row rather than just reshape the embed, added_at desc order,
-// embedded-resource normalization) from the live database. The live
-// cross-category/RLS/trash-visibility behavior is covered separately by
-// e2e/lists.spec.ts.
+// Unit coverage for lib/queries/lists.ts (issue #26, extended by #42's
+// sort_order-based member ordering), mirroring lib/queries/trash.test.ts's
+// mocked-client shape: isolates the query shape (explicit user_id/ownership
+// scoping, the items!inner join that makes `.is("items.deleted_at", null)`
+// actually exclude a trashed member's row rather than just reshape the
+// embed, sort_order asc / added_at asc order, embedded-resource
+// normalization) from the live database. The live cross-category/RLS/
+// trash-visibility behavior is covered separately by e2e/lists.spec.ts.
 
 const createClientMock = vi.fn();
 vi.mock("@/lib/supabase/server", () => ({
@@ -39,8 +39,9 @@ function fakeSupabase(options: {
   const listsSelectMock = vi.fn(() => ({ eq: listsEqMock }));
 
   // list_items table: select().in().is() (getLists' count query),
-  // select().eq().is().order() (getListDetail's member-items query), or
-  // select().eq() (getAddableItems' member-id query).
+  // select().eq().is().order().order() (getListDetail's member-items query,
+  // sort_order asc then added_at asc as of issue #42), or select().eq()
+  // (getAddableItems' member-id query).
   const listItemsIsMock = vi
     .fn()
     .mockResolvedValue(options.listItems ?? { data: [], error: null });
@@ -48,7 +49,8 @@ function fakeSupabase(options: {
   const memberOrderMock = vi
     .fn()
     .mockResolvedValue(options.memberItems ?? { data: [], error: null });
-  const memberIsMock = vi.fn(() => ({ order: memberOrderMock }));
+  const memberFirstOrderMock = vi.fn(() => ({ order: memberOrderMock }));
+  const memberIsMock = vi.fn(() => ({ order: memberFirstOrderMock }));
   const addableMembersEqMock = vi
     .fn()
     .mockResolvedValue(options.addableMembers ?? { data: [], error: null });
@@ -112,6 +114,7 @@ function fakeSupabase(options: {
     listItemsInMock,
     listItemsIsMock,
     memberIsMock,
+    memberFirstOrderMock,
     memberOrderMock,
     addableMembersEqMock,
     itemsSelectMock,
@@ -193,7 +196,7 @@ describe("getListDetail", () => {
     expect(result).toBeNull();
   });
 
-  it("scopes the list lookup by id AND user_id, orders member items added_at desc, and normalizes embedded rows", async () => {
+  it("scopes the list lookup by id AND user_id, orders member items by sort_order then added_at ascending, and normalizes embedded rows", async () => {
     const supabase = fakeSupabase({
       user: { id: "user-1" },
       list: { data: { id: "list-1", name: "Play next" }, error: null },
@@ -232,7 +235,8 @@ describe("getListDetail", () => {
       ],
     });
     expect(supabase.memberIsMock).toHaveBeenCalledWith("items.deleted_at", null);
-    expect(supabase.memberOrderMock).toHaveBeenCalledWith("added_at", { ascending: false });
+    expect(supabase.memberFirstOrderMock).toHaveBeenCalledWith("sort_order", { ascending: true });
+    expect(supabase.memberOrderMock).toHaveBeenCalledWith("added_at", { ascending: true });
   });
 });
 

@@ -285,7 +285,10 @@ test.describe("Mobile polish: authenticated pages (issue #31)", () => {
           label: "/lists/[listId] (list detail)",
           cta: (p) => p.getByRole("button", { name: /^add to list$/i }),
           formControl: (p) => p.getByLabel("Item", { exact: true }),
-          row: (p) => p.getByRole("button", { name: /^remove$/i }).first(),
+          // Remove's accessible name now includes the item title (issue
+          // #42, to disambiguate multiple rows' otherwise-identical "Remove"
+          // buttons) -- unanchored match, same reasoning.
+          row: (p) => p.getByRole("button", { name: /remove/i }).first(),
         },
         {
           path: "/trash",
