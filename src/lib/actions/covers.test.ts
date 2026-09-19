@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Unit coverage for uploadCoverAction (issue #19), focused on what e2e
 // coverage (e2e/cover-upload.spec.ts) can exercise live but not directly
@@ -25,7 +25,7 @@ vi.mock("next/navigation", () => ({
   redirect: (...args: [string]) => redirectMock(...args),
 }));
 
-const { removeCoverAction, uploadCoverAction } = await import("./covers");
+const { attachSteamCoverAction, removeCoverAction, uploadCoverAction } = await import("./covers");
 const { initialUploadCoverState } = await import("@/lib/validation/covers");
 
 type FakeRow = Record<string, unknown> | null;
@@ -425,5 +425,128 @@ describe("removeCoverAction", () => {
 
     expect(supabase.removeMock).not.toHaveBeenCalled();
     expect(supabase.itemImagesDeleteMock).not.toHaveBeenCalled();
+  });
+});
+
+// Unit coverage for attachSteamCoverAction (issue #62) -- the Steam-import
+// cover path. Live behavior against the real CDN (both URLs 200, a 404 on
+// library_600x900.jpg falling back to header.jpg, and both 404ing for a
+// nonexistent appid) was verified separately against real appids (see the
+// issue's QA notes); this suite covers the same branches with a mocked
+// global.fetch, plus that this reuses the exact same storeItemCover
+// insert-vs-update logic uploadCoverAction's own suite above already
+// exercises (no parallel pipeline, per issue #62's Constraints).
+describe("attachSteamCoverAction", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    createClientMock.mockReset();
+    global.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function fakeCoverImageResponse(ok: boolean): Response {
+    return {
+      ok,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    } as Response;
+  }
+
+  // attachSteamCoverAction takes its supabase client as a real parameter
+  // (unlike uploadCoverAction/removeCoverAction above, which call
+  // createClient() internally -- so those tests never type-check the fake
+  // client object itself). This asserts the same structural fake used
+  // throughout this file is close enough to the generated SupabaseClient
+  // type for this suite's purposes.
+  type SteamCoverSupabase = Parameters<typeof attachSteamCoverAction>[0];
+  function asSupabase(supabase: ReturnType<typeof fakeSupabase>): SteamCoverSupabase {
+    return supabase as unknown as SteamCoverSupabase;
+  }
+
+  it("fetches library_600x900.jpg first and stores it directly when it succeeds", async () => {
+    const supabase = fakeSupabase({ existingCover: null });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(fakeCoverImageResponse(true));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 10);
+
+    expect(result).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("library_600x900.jpg");
+    expect(supabase.uploadMock).toHaveBeenCalledTimes(1);
+    const [path, , uploadOptions] = supabase.uploadMock.mock.calls[0];
+    expect(path).toBe("user-1/item-1/cover");
+    expect(uploadOptions).toMatchObject({ upsert: true, contentType: "image/jpeg" });
+    expect(supabase.itemImagesInsertMock).toHaveBeenCalledWith({
+      item_id: "item-1",
+      storage_path: "user-1/item-1/cover",
+      is_cover: true,
+    });
+  });
+
+  it("falls back to header.jpg when library_600x900.jpg isn't ok", async () => {
+    const supabase = fakeSupabase({ existingCover: null });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(fakeCoverImageResponse(false))
+      .mockResolvedValueOnce(fakeCoverImageResponse(true));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 35420);
+
+    expect(result).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("header.jpg");
+    expect(supabase.uploadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a clean error (never touches storage) when both CDN URLs fail", async () => {
+    const supabase = fakeSupabase({ existingCover: null });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock
+      .mockResolvedValueOnce(fakeCoverImageResponse(false))
+      .mockResolvedValueOnce(fakeCoverImageResponse(false));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 999999999);
+
+    expect(result).toEqual({ error: "Steam has no cover image available for this game." });
+    expect(supabase.uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a clean error (never throws) on a network failure reaching Steam's CDN", async () => {
+    const supabase = fakeSupabase({ existingCover: null });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockRejectedValueOnce(new Error("network down"));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 10);
+
+    expect(result).toEqual({ error: "Could not reach Steam's image server." });
+    expect(supabase.uploadMock).not.toHaveBeenCalled();
+  });
+
+  it("reuses the same insert-vs-update item_images logic as uploadCoverAction: an existing cover row is UPDATEd, not duplicated", async () => {
+    const supabase = fakeSupabase({ existingCover: { id: "image-1" } });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(fakeCoverImageResponse(true));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 10);
+
+    expect(result).toEqual({ success: true });
+    expect(supabase.itemImagesInsertMock).not.toHaveBeenCalled();
+    expect(supabase.itemImagesUpdateMock).toHaveBeenCalledWith({
+      storage_path: "user-1/item-1/cover",
+    });
+  });
+
+  it("a storage upload failure returns a clean error", async () => {
+    const supabase = fakeSupabase({ existingCover: null, uploadError: { message: "storage exploded" } });
+    const fetchMock = global.fetch as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValueOnce(fakeCoverImageResponse(true));
+
+    const result = await attachSteamCoverAction(asSupabase(supabase), "user-1", "item-1", 10);
+
+    expect(result).toEqual({ error: "Failed to upload cover image. Please try again." });
   });
 });

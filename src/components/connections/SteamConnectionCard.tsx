@@ -38,8 +38,16 @@ export function SteamConnectionCard() {
   // again -- fully replaces the picker's selection and clears any previous
   // import summary, rather than merging with or leaving behind state from a
   // prior lookup (issue #62 AC: "the whole flow works repeatably... without
-  // any leftover state from the first lookup"). Every not-already-in-library
-  // game starts checked; already-in-library ones start (and stay) unchecked.
+  // any leftover state from the first lookup").
+  //
+  // Selection starts empty, not "every not-already-in-library game
+  // pre-checked" -- the issue's own Goal is explicit that this is "reviewed
+  // and selected item-by-item, not a blind bulk import," and a real account
+  // can easily return several hundred games (confirmed live against a
+  // public profile during verification), where pre-checking all of them
+  // would make one click on "Add selected" indistinguishable from a blind
+  // bulk import. The "Select all not in library" button below is the
+  // opt-in shortcut for someone who does want everything.
   //
   // Adjusted during render (React's documented pattern for "state that
   // depends on a prop/earlier state changing"), not in a useEffect -- a
@@ -49,9 +57,7 @@ export function SteamConnectionCard() {
   const [trackedGames, setTrackedGames] = useState(lookupState.games);
   if (lookupState.games !== trackedGames) {
     setTrackedGames(lookupState.games);
-    setSelected(
-      new Set((lookupState.games ?? []).filter((game) => !game.alreadyInLibrary).map((game) => game.appid)),
-    );
+    setSelected(new Set());
     setImportState(initialSteamImportState);
   }
 
@@ -62,6 +68,17 @@ export function SteamConnectionCard() {
       else next.delete(appid);
       return next;
     });
+  }
+
+  function selectAllRemaining() {
+    if (!lookupState.games) return;
+    setSelected(
+      new Set(lookupState.games.filter((game) => !game.alreadyInLibrary).map((game) => game.appid)),
+    );
+  }
+
+  function clearSelection() {
+    setSelected(new Set());
   }
 
   function handleImport() {
@@ -142,9 +159,29 @@ export function SteamConnectionCard() {
               {lookupState.games.length} game{lookupState.games.length === 1 ? "" : "s"} found,{" "}
               {selectableCount} not yet in your library.
             </p>
-            <Button type="button" variant="outline" size="sm" onClick={handleDownloadJson}>
-              Download JSON
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={selectAllRemaining}
+                disabled={selectableCount === 0}
+              >
+                Select all
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={clearSelection}
+                disabled={selected.size === 0}
+              >
+                Clear
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={handleDownloadJson}>
+                Download JSON
+              </Button>
+            </div>
           </div>
 
           <ul className="flex max-h-96 flex-col gap-1 overflow-y-auto rounded-md border border-border">
