@@ -136,7 +136,7 @@ Hobby Library/
 │   └── dragon-loading.gif              # loading.tsx's fallback asset (#59)
 ├── .github/
 │   └── workflows/
-│       └── supabase-keepalive.yml  # scheduled ping preventing free-tier Supabase pause (#32)
+│       └── supabase-keepalive.yml  # scheduled ping preventing free-tier Supabase pause (#32); pings with the service-role key (a repo secret) for a genuine 2xx, not the anon key — an anon-key ping gets RLS-rejected (401) and does NOT count as activity toward Supabase's auto-pause timer, the hard way (#61)
 ├── .env.example
 ├── next.config.ts
 ├── tsconfig.json
