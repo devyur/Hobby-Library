@@ -2,20 +2,27 @@ name: Supabase keep-alive
 
 # Free-tier Supabase projects auto-pause after ~7 days with no API activity
 # (see _docs/plan.md's tech-stack section). This pings the project daily —
-# comfortably under that threshold — using only the already-public
-# NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (the same values
-# shipped in every browser bundle), so no repo secret is required. They're
-# passed as repository variables (Settings > Secrets and variables >
-# Actions > Variables) rather than secrets, since they're already public.
+# comfortably under that threshold.
 #
 # The ping targets `categories` via PostgREST. That table only grants
 # SELECT to the `authenticated` role (see
-# supabase/migrations/20260908123222_create_reference_tables.sql), so the
-# anon/publishable key gets a 401 "permission denied" back — but that
-# response comes from Postgres itself via PostgREST, proving the request
-# reached the database, which is what resets the inactivity clock. Any
-# response (2xx or a well-formed 4xx from Supabase) counts as success; only
-# a network-level failure (no response at all) fails the job.
+# supabase/migrations/20260908123222_create_reference_tables.sql), so an
+# anon-key request gets rejected with a 401 "permission denied" by
+# PostgREST/RLS before it becomes a real read. A rejected request like that
+# is NOT evidence Supabase's auto-pause inactivity clock was reset — it does
+# not count as activity, which is exactly what let this workflow silently
+# fail to prevent a real pause for over a week. So this ping uses the
+# service-role key instead, which bypasses RLS and gets a genuine
+# authenticated row back. SUPABASE_URL stays a public repo variable
+# (Settings > Secrets and variables > Actions > Variables), but the
+# service-role key is sensitive (full admin access) and is stored as a
+# repo secret (Settings > Secrets and variables > Actions > Secrets), never
+# a variable.
+#
+# The job only succeeds on a genuine 2xx with real data — any other status
+# (4xx, 5xx, 1xx, or no response at all) fails the job, since only a
+# genuine successful authenticated read is proof the inactivity clock was
+# reset.
 
 on:
   schedule:
@@ -30,10 +37,10 @@ jobs:
       - name: Ping Supabase REST API
         env:
           SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "::error::NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY repo variables are not set."
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_URL repo variable or SUPABASE_SERVICE_ROLE_KEY repo secret is not set."
             exit 1
           fi
 
@@ -42,8 +49,8 @@ jobs:
             -o /tmp/response.json \
             -w "%{http_code}" \
             "${SUPABASE_URL}/rest/v1/categories?select=id&limit=1" \
-            -H "apikey: ${SUPABASE_ANON_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}")
+            -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}")
           curl_exit=$?
 
           echo "HTTP status: ${http_status}"
@@ -55,9 +62,9 @@ jobs:
             exit 1
           fi
 
-          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 600 ]; then
-            echo "::error::Unexpected/no HTTP status from Supabase (${http_status})."
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            echo "::error::Supabase did not return a successful (2xx) status (${http_status}) — a rejected or errored request does not count as activity."
             exit 1
           fi
 
-          echo "Reached Supabase project API — activity recorded."
+          echo "Reached Supabase project API with an authenticated read — activity recorded."
