@@ -55,7 +55,11 @@ function zodFieldErrors(issues: { path: PropertyKey[]; message: string }[]) {
 // mismatch that slipped past an explicit pre-check (or wasn't checked at
 // all, as in quickAddItemAction, which trusts its own just-resolved
 // subtype).
-async function insertItemRow(
+//
+// Exported as of issue #62: lib/actions/steam.ts's bulk Steam-import action
+// is a third caller, reusing this exact insert rather than a duplicated one
+// -- precisely the shape this helper was built for.
+export async function insertItemRow(
   supabase: SupabaseServerClient,
   params: {
     userId: string;

@@ -11,6 +11,152 @@ import {
   type UploadCoverActionState,
 } from "@/lib/validation/covers";
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+// Shared storage-upload + item_images-upsert helper (issue #62), extracted
+// from what used to be inlined directly in uploadCoverAction below. Two
+// callers as of #62: uploadCoverAction (after the browser resizes a
+// user-picked file to WebP) and attachSteamCoverAction further down (after
+// the server fetches an as-is JPEG from Steam's CDN) -- neither re-encodes
+// or validates the file any further here; both have already decided the
+// bytes/contentType they want stored.
+//
+// The issue's own illustrative signature was (supabase, itemId, file,
+// contentType) -- this also takes userId, which the fixed storage path
+// `${userId}/${itemId}/cover` (issue #19's Constraints) genuinely needs;
+// every existing caller already has the caller's own auth.getUser() result
+// in hand, so passing it through here is free and avoids a second lookup
+// inside this helper.
+//
+// Kept unexported: both real callers live in this same "use server" module.
+// attachSteamCoverAction is the one export the Steam-import path
+// (lib/actions/steam.ts) actually calls -- it wraps this helper with the
+// CDN-fetch step, rather than lib/actions/steam.ts reaching in and calling
+// this directly.
+async function storeItemCover(
+  supabase: SupabaseServerClient,
+  userId: string,
+  itemId: string,
+  file: File,
+  contentType: string,
+): Promise<{ success: true } | { error: string }> {
+  // Fixed, extension-less path per item (issue #19's Constraints). Uploaded
+  // with upsert: true + an explicit contentType, so a later replacement
+  // overwrites this same storage object in place -- no old file is ever
+  // orphaned, and there's no delete-then-insert race against item_images'
+  // partial unique index (database-schema.md §3, added by #5) to manage,
+  // since the object's path never changes between uploads.
+  const storagePath = `${userId}/${itemId}/cover`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("covers")
+    .upload(storagePath, file, { upsert: true, contentType });
+  if (uploadError) {
+    return { error: "Failed to upload cover image. Please try again." };
+  }
+
+  // Check for an existing is_cover=true row first to decide insert vs.
+  // update (issue #19's Constraints; the update branch added by #38). On
+  // the item's first-ever cover, insert one row. On a later replacement,
+  // that row's storage_path is already correct (the path never changes) --
+  // only the storage object above changed -- but the row itself must still
+  // be written to, not skipped: an UPDATE (even one that writes back the
+  // same storage_path) is what fires item_images_set_updated_at (migration
+  // 20260910150000), advancing updated_at so the public cover URL's `?v=`
+  // cache-busting param (src/lib/queries/items.ts) actually changes. Either
+  // branch keeps exactly one item_images row with is_cover=true for this
+  // item, never zero, never two.
+  const { data: existingCover } = await supabase
+    .from("item_images")
+    .select("id")
+    .eq("item_id", itemId)
+    .eq("is_cover", true)
+    .maybeSingle();
+
+  if (existingCover) {
+    const { error: updateError } = await supabase
+      .from("item_images")
+      .update({ storage_path: storagePath })
+      .eq("id", existingCover.id);
+    if (updateError) {
+      return {
+        error: "Cover image uploaded, but saving it failed. Please try again.",
+      };
+    }
+  } else {
+    const { error: insertError } = await supabase.from("item_images").insert({
+      item_id: itemId,
+      storage_path: storagePath,
+      is_cover: true,
+    });
+    if (insertError) {
+      return {
+        error: "Cover image uploaded, but saving it failed. Please try again.",
+      };
+    }
+  }
+
+  return { success: true };
+}
+
+// Steam's own pre-sized, already-JPEG CDN images (issue #62's Background --
+// confirmed live against a real appid during grooming). library_600x900.jpg
+// is portrait 600x900, exactly the 2:3 ratio CoverThumbnail.tsx's
+// aspect-2/3 crop expects; header.jpg (460x215, landscape) is the fallback
+// for older/smaller titles that lack the portrait asset. Both are stored
+// as-is -- no resize/re-encode step, unlike uploadCoverAction's browser-side
+// WebP path (see #37/resizeCoverImage.ts, which is confirmed browser-only
+// and can't run here).
+function steamCoverUrls(appid: number): { primary: string; fallback: string } {
+  const base = `https://cdn.akamai.steamstatic.com/steam/apps/${appid}`;
+  return { primary: `${base}/library_600x900.jpg`, fallback: `${base}/header.jpg` };
+}
+
+// Fetches a Steam-imported game's cover server-side and stores it via the
+// same storeItemCover helper uploadCoverAction uses below -- issue #62's
+// "not a parallel pipeline" constraint. Called once per selected game from
+// importSteamGamesAction (lib/actions/steam.ts), itself already inside a
+// per-game try/continue loop there: this never throws for a plain fetch
+// failure or a 404 on both CDN URLs, it always resolves to an { error }
+// object instead, so one game's missing/unreachable cover can never roll
+// back or block the rest of the bulk import (issue #62 AC) -- the item
+// itself was already created by insertItemRow before this is even called.
+export async function attachSteamCoverAction(
+  supabase: SupabaseServerClient,
+  userId: string,
+  itemId: string,
+  appid: number,
+): Promise<{ success: true } | { error: string }> {
+  const { primary, fallback } = steamCoverUrls(appid);
+
+  let response: Response;
+  try {
+    response = await fetch(primary);
+    if (!response.ok) {
+      response = await fetch(fallback);
+    }
+  } catch {
+    return { error: "Could not reach Steam's image server." };
+  }
+
+  if (!response.ok) {
+    return { error: "Steam has no cover image available for this game." };
+  }
+
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await response.arrayBuffer();
+  } catch {
+    return { error: "Steam's image server returned an unreadable response." };
+  }
+
+  // Node's Server Action runtime has File/Blob as globals (issue #62's
+  // Constraints) -- no Canvas involved, unlike the browser-side upload path.
+  const file = new File([bytes], "cover.jpg", { type: "image/jpeg" });
+
+  return storeItemCover(supabase, userId, itemId, file, "image/jpeg");
+}
+
 // Server Action backing CoverUploadControl.tsx (issue #19), attached at the
 // item detail page's CoverThumbnail spot -- not inside ItemEditForm.tsx,
 // whose own header comment says cover stays out of scope for editing there
@@ -88,64 +234,14 @@ export async function uploadCoverAction(
     return { error: "This item could not be found." };
   }
 
-  // Fixed, extension-less path per item (issue #19's Constraints). Uploaded
-  // with upsert: true + an explicit contentType set to the just-validated
-  // MIME type, so a later replacement overwrites this same storage object
-  // in place -- no old file is ever orphaned, and there's no delete-then-
-  // insert race against item_images' partial unique index (database-
-  // schema.md §3, added by #5) to manage, since the object's path never
-  // changes between uploads.
-  const storagePath = `${user.id}/${itemId}/cover`;
-
-  const { error: uploadError } = await supabase.storage
-    .from("covers")
-    .upload(storagePath, file, { upsert: true, contentType: file.type });
-  if (uploadError) {
-    return { error: "Failed to upload cover image. Please try again." };
-  }
-
-  // Check for an existing is_cover=true row first to decide insert vs.
-  // update (issue #19's Constraints; the update branch added by #38). On
-  // the item's first-ever cover upload, insert one row. On a later
-  // replacement, that row's storage_path is already correct (the path
-  // never changes) -- only the storage object above changed -- but the row
-  // itself must still be written to, not skipped: an UPDATE (even one that
-  // writes back the same storage_path) is what fires
-  // item_images_set_updated_at (migration 20260910150000), advancing
-  // updated_at so the public cover URL's `?v=` cache-busting param
-  // (src/lib/queries/items.ts) actually changes on every replace. Before
-  // #38, this branch was a no-op -- fine while covers were served via
-  // fresh signed URLs on every request, but wrong now that the URL is
-  // meant to be cached long-lived. Either branch keeps a replace at
-  // exactly one item_images row with is_cover=true, never zero, never two.
-  const { data: existingCover } = await supabase
-    .from("item_images")
-    .select("id")
-    .eq("item_id", itemId)
-    .eq("is_cover", true)
-    .maybeSingle();
-
-  if (existingCover) {
-    const { error: updateError } = await supabase
-      .from("item_images")
-      .update({ storage_path: storagePath })
-      .eq("id", existingCover.id);
-    if (updateError) {
-      return {
-        error: "Cover image uploaded, but saving it failed. Please try again.",
-      };
-    }
-  } else {
-    const { error: insertError } = await supabase.from("item_images").insert({
-      item_id: itemId,
-      storage_path: storagePath,
-      is_cover: true,
-    });
-    if (insertError) {
-      return {
-        error: "Cover image uploaded, but saving it failed. Please try again.",
-      };
-    }
+  // Storage-upload + item_images-upsert logic lives in storeItemCover above
+  // (extracted by issue #62 so the Steam-import cover path can reuse it
+  // rather than duplicating it) -- same fixed `${user.id}/${itemId}/cover`
+  // path, same insert-vs-update-existing-row branch, same #38 updated_at
+  // reasoning, all unchanged from before the extraction.
+  const result = await storeItemCover(supabase, user.id, itemId, file, file.type);
+  if ("error" in result) {
+    return { error: result.error };
   }
 
   // Same "redirect back to the same detail route" pattern updateItemAction

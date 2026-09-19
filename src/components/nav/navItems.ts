@@ -23,6 +23,10 @@ export function buildNavItems(categories: CategorySummary[]): NavItem[] {
       href: `/${category.slug}`,
     })),
     { label: "Custom Lists", href: "/lists" },
+    // Connections (issue #62): import a library from an external service
+    // (Steam first, more later) -- distinct from Settings' own "Import"
+    // (#30, restoring this app's own JSON export format).
+    { label: "Connections", href: "/connections" },
     { label: "Settings", href: "/settings" },
   ];
 }

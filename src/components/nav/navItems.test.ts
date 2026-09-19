@@ -14,6 +14,7 @@ describe("buildNavItems", () => {
       { label: "Games", href: "/games" },
       { label: "Books", href: "/books" },
       { label: "Custom Lists", href: "/lists" },
+      { label: "Connections", href: "/connections" },
       { label: "Settings", href: "/settings" },
     ]);
   });
@@ -24,6 +25,7 @@ describe("buildNavItems", () => {
     expect(items).toEqual([
       { label: "Dashboard", href: "/dashboard" },
       { label: "Custom Lists", href: "/lists" },
+      { label: "Connections", href: "/connections" },
       { label: "Settings", href: "/settings" },
     ]);
   });
